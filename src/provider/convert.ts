@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import secureJsonParse from 'secure-json-parse';
 import {P, match} from 'ts-pattern';
-import type {GlmMessage, GlmTool, GlmToolCall} from '../api';
+import type {GlmContentPart, GlmMessage, GlmTool, GlmToolCall} from '../api';
 import {readThinkingText} from './thinking';
 
 export type ToolCallBuilder = {
@@ -17,6 +17,7 @@ type ToolResult = {
 
 type MessageAccumulator = {
   text: string;
+  imageParts: GlmContentPart[];
   toolCalls: GlmToolCall[];
   toolResult?: ToolResult;
 };
@@ -70,11 +71,27 @@ function toGlmMessage(
               .join(''),
           },
         }))
+        .with(P.instanceOf(vscode.LanguageModelDataPart), value => {
+          if (value.mimeType.startsWith('image/')) {
+            const base64 = uint8ArrayToBase64(value.data);
+            return {
+              ...state,
+              imageParts: [
+                ...state.imageParts,
+                {
+                  type: 'image_url' as const,
+                  image_url: {url: `data:${value.mimeType};base64,${base64}`},
+                },
+              ],
+            };
+          }
+          return state;
+        })
         .otherwise(value => {
           const thinking = readThinkingText(value);
           return thinking ? {...state, text: state.text + thinking} : state;
         }),
-    {text: '', toolCalls: []},
+    {text: '', imageParts: [], toolCalls: []},
   );
 
   const role = mapRole(message.role);
@@ -95,6 +112,15 @@ function toGlmMessage(
     };
   }
 
+  if (accumulated.imageParts.length > 0) {
+    const content: GlmContentPart[] = [];
+    if (accumulated.text) {
+      content.push({type: 'text', text: accumulated.text});
+    }
+    content.push(...accumulated.imageParts);
+    return {role, content};
+  }
+
   return {role, content: accumulated.text};
 }
 
@@ -105,6 +131,16 @@ function mapRole(
     .with(vscode.LanguageModelChatMessageRole.Assistant, () => 'assistant' as const)
     .with(vscode.LanguageModelChatMessageRole.User, () => 'user' as const)
     .otherwise(() => 'system' as const);
+}
+
+function uint8ArrayToBase64(data: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < data.length; i += chunkSize) {
+    const chunk = data.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+  }
+  return Buffer.from(binary, 'binary').toString('base64');
 }
 
 export function convertTools(

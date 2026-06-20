@@ -11,9 +11,13 @@ import type {
 
 const BASE_URL = 'https://api.z.ai/api/coding/paas/v4';
 
+export type GlmContentPart =
+  | {type: 'text'; text: string}
+  | {type: 'image_url'; image_url: {url: string}};
+
 export interface GlmMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  content: string | GlmContentPart[];
   name?: string;
   tool_calls?: GlmToolCall[];
   tool_call_id?: string;
@@ -125,7 +129,7 @@ export class GlmApiClient {
           role: 'user' as const,
           content: message.content,
         })),
-    );
+    ) as ChatCompletionMessageParam[];
   }
 
   private toOpenAiTools(tools?: GlmTool[]): ChatCompletionTool[] | undefined {
