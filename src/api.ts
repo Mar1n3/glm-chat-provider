@@ -44,6 +44,7 @@ export interface ChatOptions {
   tools?: GlmTool[];
   stop?: string[];
   thinking?: Record<string, unknown>;
+  reasoningEffort?: string;
   onUsage?: (usage: {prompt_tokens: number; completion_tokens: number; total_tokens: number; cached_tokens?: number}) => void;
 }
 
@@ -160,6 +161,10 @@ export class GlmApiClient {
     if (options?.thinking) {
       (params as unknown as Record<string, unknown>).thinking =
         options.thinking;
+    }
+    if (options?.reasoningEffort) {
+      (params as unknown as Record<string, unknown>).reasoning_effort =
+        options.reasoningEffort;
     }
 
     const tools = this.toOpenAiTools(options?.tools);

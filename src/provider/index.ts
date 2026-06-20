@@ -145,34 +145,64 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   private resolveThinking(
     modelId: string,
     options?: ModelConfigurationOptions,
-  ): Record<string, unknown> | undefined {
+  ): {thinking?: Record<string, unknown>; reasoningEffort?: string} {
     const def = GLM_MODEL_DEFINITIONS.find(m => m.id === modelId);
-    const canDisable = def?.thinkingSupport === 'on-off';
+    const canDisable =
+      def?.thinkingSupport === 'on-off' ||
+      def?.thinkingSupport === 'on-off-effort';
+    const hasEffort = def?.thinkingSupport === 'on-off-effort';
 
     if (options) {
       const configuredMode =
         options.modelConfiguration?.thinkingMode ?? options.configuration?.thinkingMode;
-      if (configuredMode === 'enabled') {
-        // For GLM 5.1+/5/4.7 series, thinking is enabled by default.
-        // Sending clear_thinking alongside type: 'enabled' causes a validation
-        // error on newer models. Only send {type: 'enabled'} without extra fields.
-        return { type: 'enabled' };
-      }
-      if (configuredMode === 'disabled' && canDisable) {
-        return { type: 'disabled' };
+
+      if (hasEffort) {
+        if (configuredMode === 'high') {
+          return {thinking: {type: 'enabled'}, reasoningEffort: 'high'};
+        }
+        if (configuredMode === 'max') {
+          return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
+        }
+        if (configuredMode === 'disabled') {
+          return {thinking: {type: 'disabled'}};
+        }
+      } else {
+        if (configuredMode === 'enabled') {
+          // For GLM 5.1+/5/4.7 series, thinking is enabled by default.
+          // Sending clear_thinking alongside type: 'enabled' causes a validation
+          // error on newer models. Only send {type: 'enabled'} without extra fields.
+          return {thinking: {type: 'enabled'}};
+        }
+        if (configuredMode === 'disabled' && canDisable) {
+          return {thinking: {type: 'disabled'}};
+        }
       }
     }
 
     const config = vscode.workspace
       .getConfiguration('glm-chat-provider')
       .get<string>('defaultThinkingMode', 'auto');
-    if (config === 'enabled') {
-      return { type: 'enabled' };
+
+    if (hasEffort) {
+      if (config === 'high') {
+        return {thinking: {type: 'enabled'}, reasoningEffort: 'high'};
+      }
+      if (config === 'max') {
+        return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
+      }
+      if (config === 'disabled') {
+        return {thinking: {type: 'disabled'}};
+      }
+    } else {
+      if (config === 'enabled') {
+        return {thinking: {type: 'enabled'}};
+      }
+      if (config === 'disabled' && canDisable) {
+        return {thinking: {type: 'disabled'}};
+      }
     }
-    if (config === 'disabled' && canDisable) {
-      return { type: 'disabled' };
-    }
-    return undefined;
+
+    return {};
   }
 
   private async streamResponse(
@@ -187,7 +217,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
 
     const modelConfig = options as ModelConfigurationOptions;
     const temperature = getConfiguredTemperature(modelConfig);
-    const thinking = this.resolveThinking(model.id, modelConfig);
+    const {thinking, reasoningEffort} = this.resolveThinking(model.id, modelConfig);
 
     const stream = client.streamChat(
       model.id,
@@ -197,6 +227,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
         tools: convertTools(options.tools),
         temperature,
         thinking,
+        reasoningEffort,
         onUsage: this.onUsage,
       },
       token,

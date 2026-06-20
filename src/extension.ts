@@ -77,6 +77,18 @@ async function setThinkingEffort(): Promise<void> {
       picked: current === 'enabled',
     },
     {
+      label: 'High',
+      description: 'Thinking enabled, high effort (GLM-5.2+)',
+      value: 'high',
+      picked: current === 'high',
+    },
+    {
+      label: 'Max',
+      description: 'Thinking enabled, max effort (GLM-5.2+)',
+      value: 'max',
+      picked: current === 'max',
+    },
+    {
       label: 'Disabled',
       description: 'Always disable thinking mode',
       value: 'disabled',

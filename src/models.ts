@@ -1,7 +1,7 @@
 import type * as vscode from 'vscode';
 
 export type TemperaturePreset = 'balanced' | 'precise' | 'creative' | 'max';
-export type ThinkingMode = 'auto' | 'enabled' | 'disabled';
+export type ThinkingMode = 'auto' | 'enabled' | 'disabled' | 'high' | 'max';
 
 export const TEMPERATURE_PRESET_VALUES: Record<TemperaturePreset, number> = {
   balanced: 0.7,
@@ -21,6 +21,43 @@ function buildModelConfigurationSchema(thinkingSupport?: ThinkingSupport) {
           enumItemLabels: ['Always On'],
           enumDescriptions: ['Thinking is always active for this model'],
           default: 'enabled',
+          group: 'navigation',
+        },
+        temperature: {
+          type: 'string',
+          title: 'Temperature',
+          enum: ['balanced', 'precise', 'creative', 'max', 'custom'],
+          enumItemLabels: ['Balanced', 'Precise', 'Creative', 'Max', 'Custom'],
+          enumDescriptions: [
+            'Standard (0.7)',
+            'Low, good for code (0.2)',
+            'Higher, good for writing (0.9)',
+            'Highest (1.0)',
+            'Custom value set in settings',
+          ],
+          default: 'balanced',
+          description: 'Presets (range: 0.0 – 1.0)',
+          group: 'navigation',
+        },
+      },
+    } as const;
+  }
+
+  if (thinkingSupport === 'on-off-effort') {
+    return {
+      properties: {
+        thinkingMode: {
+          type: 'string',
+          title: 'Thinking',
+          enum: ['auto', 'high', 'max', 'disabled'],
+          enumItemLabels: ['Auto', 'High', 'Max', 'Disabled'],
+          enumDescriptions: [
+            'Let the model decide (default)',
+            'Enabled, high effort — faster responses',
+            'Enabled, max effort — best for complex tasks (recommended)',
+            'Disable chain-of-thought',
+          ],
+          default: 'auto',
           group: 'navigation',
         },
         temperature: {
@@ -79,6 +116,7 @@ function buildModelConfigurationSchema(thinkingSupport?: ThinkingSupport) {
 }
 
 export const MODEL_CONFIGURATION_SCHEMA_BASE = buildModelConfigurationSchema('on-off');
+export const MODEL_CONFIGURATION_SCHEMA_EFFORT = buildModelConfigurationSchema('on-off-effort');
 
 export function getModelConfigurationSchema(
   thinkingSupport?: ThinkingSupport,
@@ -99,7 +137,7 @@ export type ModelPickerChatInformation = vscode.LanguageModelChatInformation & {
   readonly configurationSchema?: ReturnType<typeof getModelConfigurationSchema>;
 };
 
-export type ThinkingSupport = 'on-off' | 'always-on';
+export type ThinkingSupport = 'on-off' | 'always-on' | 'on-off-effort';
 
 export interface GlmModelDefinition {
   id: string;
@@ -115,11 +153,23 @@ export interface GlmModelDefinition {
     thinking: boolean;
   };
   /** 'on-off': thinking can be enabled/disabled via API.
-   *  'always-on': thinking is always active and cannot be disabled. */
+   *  'always-on': thinking is always active and cannot be disabled.
+   *  'on-off-effort': thinking can be enabled/disabled, with multiple effort levels (high/max). */
   thinkingSupport: ThinkingSupport;
 }
 
 export const GLM_MODEL_DEFINITIONS: readonly GlmModelDefinition[] = [
+  {
+    id: 'glm-5.2',
+    name: 'GLM-5.2',
+    family: 'glm',
+    version: '5.2',
+    detail: 'Z.AI',
+    maxInputTokens: 1000000,
+    maxOutputTokens: 131072,
+    capabilities: {imageInput: false, toolCalling: true, thinking: true},
+    thinkingSupport: 'on-off-effort',
+  },
   {
     id: 'glm-5.1',
     name: 'GLM-5.1',
