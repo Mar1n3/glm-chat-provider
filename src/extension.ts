@@ -5,16 +5,14 @@
  */
 import * as vscode from 'vscode';
 import {match} from 'ts-pattern';
-import {GlmApiClient, GlmApiError} from './api';
 import {AuthManager} from './auth';
-import {GlmChatProvider, hasVSCodeApiKey, type UsageCallback} from './provider';
 import {
-  isOfficialProvider,
-  pickChatRegions,
-  regionLabel,
-  resolveApiProvider,
-  setDetectedRegion,
-} from './region';
+  GlmChatProvider,
+  getVSCodeApiKey,
+  hasVSCodeApiKey,
+  type UsageCallback,
+} from './provider';
+import {isOfficialProvider, resolveApiProvider} from './region';
 import {
   buildUsageTooltip,
   GlmUsageClient,
@@ -32,80 +30,6 @@ function getApiRegionSetting(): string {
       .getConfiguration('glm-chat-provider')
       .get<string>('apiRegion', 'auto') ?? 'auto'
   );
-}
-
-/**
- * 命令处理：引导用户输入并保存 API Key，
- * 完成后通知 VS Code 重新收集该提供方的语言模型信息（模型随之可用/失效）。
- */
-async function setApiKey(
-  authManager: AuthManager,
-  provider: GlmChatProvider,
-): Promise<void> {
-  await authManager.promptForApiKey();
-  provider.fireLanguageModelChatInformationChange();
-}
-
-/**
- * 命令处理：连通性测试。按当前区域配置的候选顺序逐个发起一次
- * 最小聊天请求（maxTokens=1）；收到 401/403 鉴权错误时说明该 Key
- * 在此平台不可用，继续尝试下一个候选区域，其余情况直接报告结果。
- */
-async function testConnection(
-  authManager: AuthManager,
-  provider: GlmChatProvider,
-): Promise<void> {
-  // 无 Key 时提示先去设置，并可一键跳转到设置流程。
-  const key = await authManager.getApiKey();
-  if (!key) {
-    const shouldSetKey = await vscode.window.showInformationMessage(
-      'No API key in extension storage. Use "GLM: Set API Key" first, then run this test again.',
-      'Set API Key',
-    );
-    if (shouldSetKey === 'Set API Key') {
-      await setApiKey(authManager, provider);
-    }
-    return;
-  }
-
-  // 取得候选区域列表（auto 时 china 优先），依次尝试连通。
-  const regions = pickChatRegions(getApiRegionSetting());
-  for (const [index, region] of regions.entries()) {
-    const client = new GlmApiClient(key, region);
-    try {
-      await client.chat('glm-4.7', [{role: 'user', content: 'Ping'}], {
-        maxTokens: 1,
-      });
-      // 探测成功：缓存该区域供后续请求直接使用，并提示成功。
-      setDetectedRegion(region);
-      vscode.window.showInformationMessage(
-        `GLM provider test succeeded on ${regionLabel(region)}.`,
-      );
-      return;
-    } catch (error) {
-      // 401/403 表示 Key 在此区域不可用，若还有候选区域则继续尝试下一个。
-      const isAuthError =
-        error instanceof GlmApiError &&
-        (error.statusCode === 401 || error.statusCode === 403);
-      if (isAuthError && index < regions.length - 1) {
-        continue;
-      }
-      // 已到最后一个候选或遇到其他错误：构造具体失败信息并提示。
-      const message = match(error)
-        .when(
-          (value): value is GlmApiError =>
-            value instanceof GlmApiError && value.statusCode === 401,
-          () => 'Invalid API key. Please set a new key.',
-        )
-        .when(
-          (value): value is Error => value instanceof Error,
-          value => `GLM provider test failed: ${value.message}`,
-        )
-        .otherwise(value => `GLM provider test failed: ${String(value)}`);
-      vscode.window.showErrorMessage(message);
-      return;
-    }
-  }
 }
 
 /**
@@ -466,7 +390,10 @@ export function activate(context: vscode.ExtensionContext): void {
     lastUsageAttempt = now;
 
     // 未配置 Key：清空套餐数据与错误状态，状态栏退回请求数展示。
-    const apiKey = await authManager.getApiKey();
+    // Key 解析顺序：扩展自存的（存储1）→ VS Code 模型配置里的（存储2）。
+    // 后者是聊天实际用的 Key；只要其中之一存在就能查套餐用量，
+    // 避免出现“聊天正常但用量永远 Loading”的割裂状态。
+    const apiKey = (await authManager.getApiKey()) ?? getVSCodeApiKey();
     if (!apiKey) {
       planUsage = undefined;
       usageError = undefined;
@@ -545,8 +472,6 @@ export function activate(context: vscode.ExtensionContext): void {
           'GLM provider credentials cleared. To remove the chat key too, delete it in Configure Models.',
         );
       },
-      'Test Connection': () => testConnection(authManager, provider),
-      'Refresh Plan Usage': () => refreshUsage(),
     };
   };
 
@@ -602,52 +527,6 @@ export function activate(context: vscode.ExtensionContext): void {
     usageStatusBarItem,
     vscode.lm.registerLanguageModelChatProvider('zai', provider),
     {dispose: () => diagnosticsChannel?.dispose()},
-    // 命令：手动刷新套餐用量（强制模式，绕过节流）。
-    vscode.commands.registerCommand(
-      'glm-chat-provider.refreshUsage',
-      async () => {
-        await refreshUsage();
-      },
-    ),
-    // 命令：用量诊断，把监控接口返回的原始报告输出到 Output 通道。
-    vscode.commands.registerCommand(
-      'glm-chat-provider.usageDiagnostics',
-      async () => {
-        const key = await authManager.getApiKey();
-        if (!key) {
-          vscode.window.showInformationMessage(
-            'No API key in extension storage. Use "GLM: Set API Key" first.',
-          );
-          return;
-        }
-        const channel =
-          diagnosticsChannel ??
-          (diagnosticsChannel = vscode.window.createOutputChannel(
-            'GLM Usage Diagnostics',
-          ));
-        channel.clear();
-        channel.appendLine(
-          `GLM usage diagnostics — ${new Date().toISOString()}`,
-        );
-        await channel.appendLine('');
-        try {
-          const report = await new GlmUsageClient(
-            key,
-            getApiRegionSetting(),
-          ).fetchDiagnostics();
-          channel.appendLine(report);
-        } catch (error) {
-          channel.appendLine(
-            `Diagnostics failed: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-        channel.appendLine('');
-        channel.appendLine(
-          'Tip: a healthy Coding Plan key returns JSON with a "limits" array containing TOKENS_LIMIT / TIME_LIMIT entries.',
-        );
-        channel.show(true);
-      },
-    ),
     // 命令：管理菜单，每次打开都重建动作表，动态反映当前状态。
     vscode.commands.registerCommand('glm-chat-provider.manage', async () => {
       const manageActions = buildManageActions();

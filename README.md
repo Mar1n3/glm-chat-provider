@@ -101,10 +101,10 @@ Precise (0.2), Creative (0.9), Max (1.0), or a custom value.
   **Clear Provider** to drop the extension-stored key
 - `GLM: Set Thinking Effort` — Choose the global default thinking mode
 - `GLM: Set Temperature` — Choose a temperature preset or custom value
-- `GLM: Refresh Plan Usage` — Refresh the Coding Plan quota now
-- `GLM: Show Usage Diagnostics` — Print raw usage-monitor API responses
-  (both platforms × both auth schemes) to the Output channel, for
-  troubleshooting
+
+Thinking mode and temperature can also be adjusted per-chat from the model
+picker configuration (the gear entry next to the model name in the chat
+input box).
 
 ## Settings
 

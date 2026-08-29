@@ -99,9 +99,17 @@ export type UsageCallback = (usage: {
  */
 let vscodeKeyPresent = false;
 
+/** 最近一次从 VS Code 配置拿到的 API Key 值（未配置时为 undefined）。 */
+let vscodeApiKey: string | undefined;
+
 /** 查询缓存的 VS Code 侧 Key 状态；状态在每次拉取模型列表时刷新。 */
 export function hasVSCodeApiKey(): boolean {
   return vscodeKeyPresent;
+}
+
+/** 读取缓存的 VS Code 侧 API Key 值；未配置时返回 undefined。 */
+export function getVSCodeApiKey(): string | undefined {
+  return vscodeApiKey;
 }
 
 /**
@@ -140,14 +148,16 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   ): Promise<vscode.LanguageModelChatInformation[]> {
     void token; // 显式标记该参数未使用，避免触发 lint 告警。
     const raw = options.configuration?.apiKey;
-    // 缓存 VS Code 侧（模型配置界面）Key 是否存在，供管理菜单文案判断。
-    vscodeKeyPresent = typeof raw === 'string' && raw.trim().length > 0;
+    // 缓存 VS Code 侧（模型配置界面）Key 是否存在及具体值：
+    // 前者供管理菜单文案判断，后者供套餐用量查询复用。
+    vscodeApiKey =
+      typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : undefined;
+    vscodeKeyPresent = vscodeApiKey !== undefined;
     if (!vscodeKeyPresent) {
       return [];
     }
 
-    const apiKey = raw!.trim();
-    return this.modelsWithApiKey(apiKey);
+    return this.modelsWithApiKey(vscodeApiKey!);
   }
 
   /** 为每个预转换模型克隆一份并挂上 __glmApiKey，形成最终上报的模型列表。 */
