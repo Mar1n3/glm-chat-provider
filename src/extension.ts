@@ -437,8 +437,15 @@ export function activate(context: vscode.ExtensionContext): void {
     void refreshUsage(false);
   };
 
-  // 创建聊天提供方，并把 onUsage 注册为每次请求后的用量回调。
-  const provider = new GlmChatProvider(authManager, onUsage);
+  // 创建聊天提供方，并把 onUsage 注册为每次请求后的用量回调；
+  // onVSCodeKeyAvailable 在 VS Code 侧 Key 首次可得时触发——此时立刻
+  // 拉取一次用量，消除"重启后聊天面板未初始化导致用量一直 Loading"
+  // 的时序问题（refreshUsage 内部有节流与防重入，重复触发是安全的）。
+  const provider = new GlmChatProvider(
+    authManager,
+    onUsage,
+    () => void refreshUsage(true),
+  );
 
   // 管理菜单动作表构建器：每次打开菜单时重建，保证文案反映最新的
   // 服务商与密钥状态（例如 VS Code 侧 Key 是否仍存在）。

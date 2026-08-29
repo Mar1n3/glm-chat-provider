@@ -128,6 +128,15 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   constructor(
     private readonly authManager: AuthManager,
     private readonly onUsage?: UsageCallback,
+    /**
+     * VS Code 侧（模型配置界面）Key 从无到有时触发的一次性通知。
+     * 该 Key 只有在本回调 provideLanguageModelChatInformation 执行时才
+     * 可得，而 VS Code 对该回调的触发时机是懒加载的（聊天面板初始化、
+     * 模型选择器被使用等）。订阅方（extension.ts 的用量刷新）借此在
+     * Key 可得的当下立即拉取用量，消除"重启后用量一直 Loading"的时序
+     * 问题。
+     */
+    private readonly onVSCodeKeyAvailable?: () => void,
   ) {}
 
   /** 通知 VS Code 模型信息已变化，促使其重新拉取模型列表。 */
@@ -150,9 +159,14 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     const raw = options.configuration?.apiKey;
     // 缓存 VS Code 侧（模型配置界面）Key 是否存在及具体值：
     // 前者供管理菜单文案判断，后者供套餐用量查询复用。
+    const previous = vscodeApiKey;
     vscodeApiKey =
       typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : undefined;
     vscodeKeyPresent = vscodeApiKey !== undefined;
+    // Key 从无到有：通知订阅方（用量刷新）可以开始拉取了。
+    if (vscodeKeyPresent && previous === undefined) {
+      this.onVSCodeKeyAvailable?.();
+    }
     if (!vscodeKeyPresent) {
       return [];
     }
