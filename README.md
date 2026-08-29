@@ -95,9 +95,10 @@ Precise (0.2), Creative (0.9), Max (1.0), or a custom value.
 
 ## Commands
 
-- `GLM: Set API Key` — Store your API key in VS Code secrets
-- `GLM: Clear API Key` — Remove the stored API key
-- `GLM: Manage Provider` — Open provider management options
+- `GLM: Manage Provider` — Open provider management options: switch API
+  provider, **Set Provider** / **Set Provider and API Key** (label depends
+  on whether the key is already stored in VS Code's model settings), and
+  **Clear Provider** to drop the extension-stored key
 - `GLM: Set Thinking Effort` — Choose the global default thinking mode
 - `GLM: Set Temperature` — Choose a temperature preset or custom value
 - `GLM: Refresh Plan Usage` — Refresh the Coding Plan quota now

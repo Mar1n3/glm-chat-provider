@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import {match} from 'ts-pattern';
 import {GlmApiClient, GlmApiError} from './api';
 import {AuthManager} from './auth';
-import {GlmChatProvider, type UsageCallback} from './provider';
+import {GlmChatProvider, hasVSCodeApiKey, type UsageCallback} from './provider';
 import {
   isOfficialProvider,
   pickChatRegions,
@@ -44,18 +44,6 @@ async function setApiKey(
 ): Promise<void> {
   await authManager.promptForApiKey();
   provider.fireLanguageModelChatInformationChange();
-}
-
-/**
- * 命令处理：删除已保存的 API Key，刷新模型可用性信息并提示用户。
- */
-async function clearApiKey(
-  authManager: AuthManager,
-  provider: GlmChatProvider,
-): Promise<void> {
-  await authManager.deleteApiKey();
-  provider.fireLanguageModelChatInformationChange();
-  vscode.window.showInformationMessage('GLM API key cleared');
 }
 
 /**
@@ -523,30 +511,43 @@ export function activate(context: vscode.ExtensionContext): void {
   // 创建聊天提供方，并把 onUsage 注册为每次请求后的用量回调。
   const provider = new GlmChatProvider(authManager, onUsage);
 
-  // 管理菜单的动作表：菜单项文案 → 对应的异步操作。
-  // 首项动态带上当前服务商名，便于直接看到正在使用哪个平台。
-  const activeProviderConfig = vscode.workspace
-    .getConfiguration('glm-chat-provider')
-    .get<string>('apiProvider', 'zhipu');
-  const currentProviderLabel =
-    activeProviderConfig === 'custom'
-      ? 'Custom'
-      : activeProviderConfig === 'zai'
-        ? 'Z.AI'
-        : 'ZHIPU';
-  const manageActions: Record<string, () => Promise<void>> = {
-    [`Switch API Provider (current: ${currentProviderLabel})`]: () =>
-      switchProvider(),
-    'Set API Key': async () => {
-      await setApiKey(authManager, provider);
-      await refreshUsage();
-    },
-    'Clear API Key': async () => {
-      await clearApiKey(authManager, provider);
-      await refreshUsage();
-    },
-    'Test Connection': () => testConnection(authManager, provider),
-    'Refresh Plan Usage': () => refreshUsage(),
+  // 管理菜单动作表构建器：每次打开菜单时重建，保证文案反映最新的
+  // 服务商与密钥状态（例如 VS Code 侧 Key 是否仍存在）。
+  const buildManageActions = (): Record<string, () => Promise<void>> => {
+    const activeProviderConfig = vscode.workspace
+      .getConfiguration('glm-chat-provider')
+      .get<string>('apiProvider', 'zhipu');
+    const currentProviderLabel =
+      activeProviderConfig === 'custom'
+        ? 'Custom'
+        : activeProviderConfig === 'zai'
+          ? 'Z.AI'
+          : 'ZHIPU';
+    return {
+      [`Switch API Provider (current: ${currentProviderLabel})`]: () =>
+        switchProvider(),
+      // VS Code 侧（模型配置界面）已存 Key：显示 Set Provider；
+      // 未存 Key：显示 Set Provider and API Key。
+      // 两者都跳转到 VS Code 的模型配置界面完成操作。
+      [hasVSCodeApiKey() ? 'Set Provider' : 'Set Provider and API Key']:
+        async () => {
+          await vscode.commands.executeCommand(
+            'workbench.action.chat.configureModels',
+          );
+        },
+      // 仅清除本扩展自存的 Key（用量统计用的凭据）；聊天用的 Key 保存在
+      // VS Code 模型配置中，如需一并移除请前往模型配置界面删除。
+      'Clear Provider': async () => {
+        await authManager.deleteApiKey();
+        provider.fireLanguageModelChatInformationChange();
+        await refreshUsage();
+        vscode.window.showInformationMessage(
+          'GLM provider credentials cleared. To remove the chat key too, delete it in Configure Models.',
+        );
+      },
+      'Test Connection': () => testConnection(authManager, provider),
+      'Refresh Plan Usage': () => refreshUsage(),
+    };
   };
 
   // 激活时立即渲染一次状态栏，并以节流方式做首次用量拉取。
@@ -601,19 +602,6 @@ export function activate(context: vscode.ExtensionContext): void {
     usageStatusBarItem,
     vscode.lm.registerLanguageModelChatProvider('zai', provider),
     {dispose: () => diagnosticsChannel?.dispose()},
-    // 命令：设置 API Key，完成后立即刷新用量。
-    vscode.commands.registerCommand('glm-chat-provider.setApiKey', async () => {
-      await setApiKey(authManager, provider);
-      await refreshUsage();
-    }),
-    // 命令：清除 API Key，完成后立即刷新用量。
-    vscode.commands.registerCommand(
-      'glm-chat-provider.clearApiKey',
-      async () => {
-        await clearApiKey(authManager, provider);
-        await refreshUsage();
-      },
-    ),
     // 命令：手动刷新套餐用量（强制模式，绕过节流）。
     vscode.commands.registerCommand(
       'glm-chat-provider.refreshUsage',
@@ -660,8 +648,9 @@ export function activate(context: vscode.ExtensionContext): void {
         channel.show(true);
       },
     ),
-    // 命令：管理菜单，QuickPick 列出动作表中的操作并执行选中项。
+    // 命令：管理菜单，每次打开都重建动作表，动态反映当前状态。
     vscode.commands.registerCommand('glm-chat-provider.manage', async () => {
+      const manageActions = buildManageActions();
       const choice = await vscode.window.showQuickPick(
         Object.keys(manageActions),
         {

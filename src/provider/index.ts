@@ -92,6 +92,19 @@ export type UsageCallback = (usage: {
 }) => void;
 
 /**
+ * VS Code 侧（模型配置界面）是否保存了 API Key。
+ * 该 Key 只在 VS Code 调用 provideLanguageModelChatInformation 时通过
+ * options.configuration 传入，没有主动查询的 API，因此在这里缓存，
+ * 供管理菜单动态判断显示 "Set Provider" 还是 "Set Provider and API Key"。
+ */
+let vscodeKeyPresent = false;
+
+/** 查询缓存的 VS Code 侧 Key 状态；状态在每次拉取模型列表时刷新。 */
+export function hasVSCodeApiKey(): boolean {
+  return vscodeKeyPresent;
+}
+
+/**
  * GLM 聊天提供者：实现 VS Code 的 LanguageModelChatProvider 接口。
  * 职责包括：向 VS Code 上报可用模型列表（并绑定 apiKey）、处理一次
  * 聊天请求（区域候选回退、流式增量上报、工具调用拼装、思维内容透传）、
@@ -126,18 +139,14 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     token: vscode.CancellationToken,
   ): Promise<vscode.LanguageModelChatInformation[]> {
     void token; // 显式标记该参数未使用，避免触发 lint 告警。
-    if (options.configuration === undefined) {
+    const raw = options.configuration?.apiKey;
+    // 缓存 VS Code 侧（模型配置界面）Key 是否存在，供管理菜单文案判断。
+    vscodeKeyPresent = typeof raw === 'string' && raw.trim().length > 0;
+    if (!vscodeKeyPresent) {
       return [];
     }
 
-    const raw = options.configuration.apiKey;
-    const apiKey =
-      typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : undefined;
-
-    if (!apiKey) {
-      return [];
-    }
-
+    const apiKey = raw!.trim();
     return this.modelsWithApiKey(apiKey);
   }
 
