@@ -1,3 +1,12 @@
+/**
+ * GLM 聊天 API 客户端。
+ *
+ * GLM 的编码接口兼容 OpenAI 的 Chat Completions 协议，因此这里直接使用
+ * openai 官方 SDK，按平台区域切换 baseURL（见 region.ts）。本模块负责：
+ * 1. 把 VS Code 侧的消息/工具定义转换成 OpenAI 协议格式；
+ * 2. 发起流式（streamChat）/非流式（chat）请求；
+ * 3. 把 SDK 抛出的错误统一包装成 GlmApiError。
+ */
 import type * as vscode from 'vscode';
 import OpenAI from 'openai';
 import {match} from 'ts-pattern';
@@ -10,10 +19,12 @@ import type {
   ChatCompletionTool,
 } from 'openai/resources/chat/completions/completions';
 
+/** 消息内容单元：纯文本或图片（图片用 data URL 承载）。 */
 export type GlmContentPart =
   | {type: 'text'; text: string}
   | {type: 'image_url'; image_url: {url: string}};
 
+/** 发给 GLM 的一条对话消息。 */
 export interface GlmMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | GlmContentPart[];
@@ -22,6 +33,7 @@ export interface GlmMessage {
   tool_call_id?: string;
 }
 
+/** 一次工具调用（assistant 请求调用某个函数）。 */
 export interface GlmToolCall {
   id: string;
   type: 'function';
@@ -31,6 +43,7 @@ export interface GlmToolCall {
   };
 }
 
+/** 注册给模型的工具（函数）定义。 */
 export interface GlmTool {
   type: 'function';
   function: {
@@ -40,14 +53,18 @@ export interface GlmTool {
   };
 }
 
+/** 单次聊天请求的可选参数。 */
 export interface ChatOptions {
   temperature?: number;
   topP?: number;
   maxTokens?: number;
   tools?: GlmTool[];
   stop?: string[];
+  /** 思维模式开关，如 {type: 'enabled'} / {type: 'disabled'}。 */
   thinking?: Record<string, unknown>;
+  /** 思维力度：low / high / max。 */
   reasoningEffort?: string;
+  /** 服务端每次回报 token 用量时的回调。 */
   onUsage?: (usage: {
     prompt_tokens: number;
     completion_tokens: number;
@@ -56,6 +73,7 @@ export interface ChatOptions {
   }) => void;
 }
 
+/** 统一的 GLM API 错误：携带 HTTP 状态码和可选的原始响应。 */
 export class GlmApiError extends Error {
   constructor(
     message: string,
@@ -67,6 +85,11 @@ export class GlmApiError extends Error {
   }
 }
 
+/**
+ * 清理并校验 API key：去除零宽字符等不可见符号和首尾空白，
+ * 并确保 key 全部为 ASCII 字符（否则部分服务端会拒绝请求）。
+ * 校验失败时抛出 GlmApiError。
+ */
 function prepareApiKeyForOpenAIClient(apiKey: string): string {
   const cleaned = apiKey.replace(/[\u200B-\u200D\ufeff\u00A0]/g, '').trim();
   let utf16Index = 0;
@@ -86,9 +109,17 @@ function prepareApiKeyForOpenAIClient(apiKey: string): string {
   return cleaned;
 }
 
+/**
+ * GLM API 客户端。
+ * 一个实例绑定一个 API key 和一个平台区域；内部持有一个 OpenAI SDK 客户端。
+ */
 export class GlmApiClient {
   private readonly client: OpenAI;
 
+  /**
+   * @param apiKey  用户的 API key
+   * @param region  平台区域，决定请求发往 api.z.ai 还是 open.bigmodel.cn
+   */
   constructor(apiKey: string, region: GlmRegion = 'global') {
     this.client = new OpenAI({
       apiKey: prepareApiKeyForOpenAIClient(apiKey),
@@ -96,6 +127,7 @@ export class GlmApiClient {
     });
   }
 
+  /** 把本扩展的消息格式转换为 OpenAI 协议的消息格式。 */
   private toOpenAiMessages(
     messages: GlmMessage[],
   ): ChatCompletionMessageParam[] {
@@ -136,6 +168,7 @@ export class GlmApiClient {
     ) as ChatCompletionMessageParam[];
   }
 
+  /** 把本扩展的工具定义转换为 OpenAI 协议的格式；空列表返回 undefined。 */
   private toOpenAiTools(tools?: GlmTool[]): ChatCompletionTool[] | undefined {
     if (!tools?.length) {
       return undefined;
@@ -151,6 +184,7 @@ export class GlmApiClient {
     }));
   }
 
+  /** 把可选参数（topP / maxTokens / stop / thinking / tools 等）填进请求体。 */
   private applyOptionalParams(
     params:
       | ChatCompletionCreateParamsStreaming
@@ -181,6 +215,7 @@ export class GlmApiClient {
     }
   }
 
+  /** 组装流式请求参数：stream: true 并要求服务端附带 token 用量。 */
   private buildStreamingParams(
     model: string,
     messages: GlmMessage[],
@@ -199,6 +234,7 @@ export class GlmApiClient {
     return params;
   }
 
+  /** 组装非流式请求参数（一次性返回完整结果）。 */
   private buildNonStreamingParams(
     model: string,
     messages: GlmMessage[],
@@ -216,6 +252,7 @@ export class GlmApiClient {
     return params;
   }
 
+  /** 把任意抛出的异常统一转换成 GlmApiError，方便上层按状态码处理。 */
   private toGlmApiError(error: unknown): GlmApiError {
     return match(error)
       .when(
@@ -237,6 +274,12 @@ export class GlmApiClient {
       );
   }
 
+  /**
+   * 流式聊天：逐块（chunk）产出服务端返回的内容。
+   * 调用方用 for-await 循环消费；每个 chunk 携带一小段增量文本或工具调用。
+   * 若服务端返回了 token 用量，会触发 options.onUsage 回调。
+   * 支持通过 cancellationToken 中途取消请求。
+   */
   async *streamChat(
     model: string,
     messages: GlmMessage[],
@@ -281,6 +324,9 @@ export class GlmApiClient {
     }
   }
 
+  /**
+   * 非流式聊天：一次性等完整响应。仅用于连通性测试等简单场景。
+   */
   async chat(
     model: string,
     messages: GlmMessage[],

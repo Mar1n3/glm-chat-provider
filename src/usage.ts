@@ -1,3 +1,9 @@
+/**
+ * GLM Coding Plan 套餐用量模块：
+ * - GlmUsageClient 按平台与鉴权方式探测监控接口 /api/monitor/usage/quota/limit，
+ *   解析各配额窗口（5 小时/每周/长周期）；
+ * - buildUsageTooltip 把用量结果渲染成状态栏悬浮提示（含内联 SVG 进度条）。
+ */
 import * as vscode from 'vscode';
 import {
   monitorQuotaUrl,
@@ -8,42 +14,46 @@ import {
 } from './region';
 
 /**
- * Coding Plan usage monitor endpoints (same host as the chat API).
- * Discovered from the official `@z_ai/coding-helper` package, which queries
- * `{base}/api/monitor/usage/quota/limit` with the plan API key.
+ * 用量监控请求的超时时间（毫秒）。
+ *
+ * 监控端点与聊天 API 同域，路径为 `{base}/api/monitor/usage/quota/limit`
+ * （调用方式探测自官方 `@z_ai/coding-helper` 包），用套餐 API Key 鉴权查询。
  */
 const REQUEST_TIMEOUT_MS = 15000;
 
+/** 单个配额窗口的用量信息（由监控接口返回的 limits 数组逐项解析而来）。 */
 export interface PlanLimitInfo {
-  /** Raw limit type, e.g. CREDIT_LIMIT, TOKENS_LIMIT or TIME_LIMIT. */
+  /** 窗口原始类型，如 CREDIT_LIMIT、TOKENS_LIMIT 或 TIME_LIMIT。 */
   type: string;
-  /** Usage percentage of the quota window (0–100). */
+  /** 窗口已用百分比（0–100），接口未返回时由 currentValue/total 推算。 */
   percentage?: number;
-  /** Current usage value within the window, if reported. */
+  /** 窗口内当前已用数值，接口未返回时缺省。 */
   currentValue?: number;
-  /** Total quota for the window, if reported. */
+  /** 窗口配额总量，接口未返回时缺省。 */
   total?: number;
-  /** Friendly label, resolved from the window (e.g. '5-Hour Credits'). */
+  /** 人类可读的窗口标签（如 '5-Hour Credits'），按窗口类型整理得出。 */
   label?: string;
-  /** Epoch ms when this quota window resets, if reported by the API. */
+  /** 窗口重置时间（epoch 毫秒），接口报告时才有。 */
   resetAt?: number;
 }
 
+/** 一次套餐用量查询的完整结果（整理后的结构化数据）。 */
 export interface PlanUsage {
-  /** 5-hour usage limit (smallest CREDIT_LIMIT window or TOKENS_LIMIT). */
+  /** 5 小时配额窗口（total 最小的 CREDIT_LIMIT 窗口，或 TOKENS_LIMIT）。 */
   fiveHour?: PlanLimitInfo;
-  /** Extended limit (largest CREDIT_LIMIT window or TIME_LIMIT). */
+  /** 长周期配额窗口（total 最大的 CREDIT_LIMIT 窗口，或 TIME_LIMIT）。 */
   monthly?: PlanLimitInfo;
-  /** Every quota window reported by the API, in priority order. */
+  /** 接口报告的全部配额窗口，按展示优先级排序。 */
   all: PlanLimitInfo[];
-  /** Platform the key was found on, when known. */
+  /** 命中的平台（国内/国际），探测成功时才有。 */
   region?: GlmRegion;
-  /** Subscription plan name reported by the API, when known. */
+  /** 接口报告的订阅套餐名称，接口提供时才有。 */
   planName?: string;
-  /** Epoch ms of when this data was fetched. */
+  /** 本次数据抓取时间（epoch 毫秒）。 */
   fetchedAt: number;
 }
 
+/** 用量接口专用错误：携带 HTTP 状态码（业务包装错误为业务 code，网络/超时失败为 0），便于上层识别与展示。 */
 export class GlmUsageError extends Error {
   constructor(
     message: string,
@@ -54,6 +64,10 @@ export class GlmUsageError extends Error {
   }
 }
 
+/**
+ * 把任意值宽松地转成数字：接受有限数值或可解析的数字字符串，其余返回 undefined。
+ * 用于解析接口返回中类型不固定的数值字段。
+ */
 function toNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
@@ -67,7 +81,7 @@ function toNumber(value: unknown): number | undefined {
   return undefined;
 }
 
-/** Fields that may carry the quota window's reset timestamp. */
+/** 可能携带配额窗口重置时间戳的字段名列表（各平台字段名不一，逐个尝试）。 */
 const RESET_FIELD_KEYS = [
   'resetTime',
   'resetAt',
@@ -79,7 +93,7 @@ const RESET_FIELD_KEYS = [
   'expirationTime',
 ];
 
-/** Fields that may carry a display name for the subscription plan. */
+/** 可能携带订阅套餐名称的字段名列表（依次在 data 与顶层响应中尝试）。 */
 const PLAN_NAME_KEYS = [
   'planName',
   'plan_name',
@@ -88,9 +102,13 @@ const PLAN_NAME_KEYS = [
   'plan',
 ];
 
+/**
+ * 把秒/毫秒时间戳或时间字符串统一转换成 epoch 毫秒，无法识别时返回 undefined。
+ * 用于归一化各平台格式不一的重置时间字段。
+ */
 function toEpochMs(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) {
-    // Epoch seconds (~1.7e9) vs epoch milliseconds (~1.7e12).
+    // 区分 epoch 秒（约 1.7e9）与 epoch 毫秒（约 1.7e12）。
     if (value >= 1e12) {
       return value;
     }
@@ -110,6 +128,10 @@ function toEpochMs(value: unknown): number | undefined {
   return undefined;
 }
 
+/**
+ * 按给定字段名顺序从对象中取第一个非空字符串（返回去除首尾空白后的值）。
+ * 用于兼容各平台的字段命名差异。
+ */
 function pickString(record: unknown, keys: string[]): string | undefined {
   if (!record || typeof record !== 'object') {
     return undefined;
@@ -123,6 +145,7 @@ function pickString(record: unknown, keys: string[]): string | undefined {
   return undefined;
 }
 
+/** 转义文本中的 &、<、>，用于把套餐名等不可信文本安全地嵌入 HTML/Markdown 悬浮内容。 */
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -130,6 +153,11 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;');
 }
 
+/**
+ * 把接口返回的单个原始窗口对象解析为 PlanLimitInfo：必须有非空 type 字段。
+ * 数值字段做类型兼容处理；percentage 缺失时由 currentValue/total 推算；
+ * 标签与重置时间按候选字段名逐个探测。
+ */
 function parseLimitItem(raw: unknown): PlanLimitInfo | undefined {
   if (!raw || typeof raw !== 'object') {
     return undefined;
@@ -145,7 +173,7 @@ function parseLimitItem(raw: unknown): PlanLimitInfo | undefined {
     toNumber(record.usage) ?? toNumber(record.total) ?? toNumber(record.limit);
   return {
     type,
-    // Derive the percentage when the API only reports raw values.
+    // 接口只给原始数值时，用 currentValue/total 推算百分比。
     percentage:
       percentage ??
       (currentValue !== undefined && total
@@ -160,28 +188,33 @@ function parseLimitItem(raw: unknown): PlanLimitInfo | undefined {
   };
 }
 
-/** Fallback labels for the known quota window types. */
+/** 已知窗口类型的兜底标签（接口未提供名称时使用）。 */
 const LIMIT_LABELS: Record<string, string> = {
   CREDIT_LIMIT: 'Credits',
   TOKENS_LIMIT: '5-Hour Credits',
   TIME_LIMIT: 'Extended Quota',
 };
 
+/** 取窗口类型的展示标签：已知类型用预置文案，未知类型原样返回。 */
 export function limitLabel(type: string): string {
   return LIMIT_LABELS[type] ?? type;
 }
 
+/**
+ * 把解析出的窗口列表整理成 PlanUsage：识别 5 小时/长周期窗口、补齐展示标签，
+ * 并按展示优先级（TOKENS_LIMIT、TIME_LIMIT、CREDIT_LIMIT、其余）生成 all。
+ */
 function toPlanUsage(limits: PlanLimitInfo[]): PlanUsage {
   const usage: PlanUsage = {all: [], fetchedAt: Date.now()};
   const ordered: PlanLimitInfo[] = [];
 
-  // Legacy/explicit window types.
+  // 旧版/显式的窗口类型：TOKENS_LIMIT 对应 5 小时配额，TIME_LIMIT 对应长周期配额。
   const tokens = limits.filter(info => info.type === 'TOKENS_LIMIT');
   const times = limits.filter(info => info.type === 'TIME_LIMIT');
 
-  // CREDIT_LIMIT windows sorted by total ascending: the smaller window is
-  // the 5-hour quota, the larger one the weekly quota (Lite: 2,000/10,000;
-  // Pro: 12,000/60,000; Max: 28,000/140,000).
+  // CREDIT_LIMIT 窗口按 total 升序排序：最小的窗口是 5 小时配额，
+  // 最大的是每周配额（Lite 档 2,000/10,000；Pro 档 12,000/60,000；
+  // Max 档 28,000/140,000）。
   const credits = limits
     .filter(info => info.type === 'CREDIT_LIMIT')
     .sort((a, b) => (a.total ?? Infinity) - (b.total ?? Infinity));
@@ -224,21 +257,21 @@ function toPlanUsage(limits: PlanLimitInfo[]): PlanUsage {
   return usage;
 }
 
+/** GLM Coding Plan 套餐用量查询客户端：按平台与鉴权方式依次探测监控接口，并把结果整理为 PlanUsage。 */
 export class GlmUsageClient {
   constructor(
     private readonly apiKey: string,
-    /** `apiRegion` config value: 'auto' | 'global' | 'china'. */
+    /** `apiRegion` 配置值：'auto'（自动探测）| 'global'（国际版）| 'china'（国内版）。 */
     private readonly regionSetting: string | undefined = 'auto',
   ) {}
 
   /**
-   * Fetch the current Coding Plan quota usage.
-   * Returns the 5-hour token quota and (if present) the monthly/weekly quota.
+   * 查询当前 Coding Plan 套餐用量，返回 5 小时配额及（若有）长周期/每周配额。
    *
-   * The official `@z_ai/coding-helper` queries the monitor endpoint with the
-   * raw plan key in the Authorization header (no `Bearer` prefix). Some
-   * server versions also accept `Bearer <key>`, so each platform is tried
-   * with the official scheme first and the prefixed form as a fallback.
+   * 官方 `@z_ai/coding-helper` 以裸套餐 Key 调用监控接口（Authorization 头
+   * 不带 `Bearer` 前缀）；部分服务端也接受 `Bearer <key>`。因此按区域候选
+   * 列表（先国内后国际）× 两种鉴权方式依次探测：每个平台先用官方方式、
+   * 再用带前缀的方式，拿到有效配额立即返回并缓存该平台。
    */
   async fetchPlanUsage(): Promise<PlanUsage> {
     const regions = resolveRegionCandidates(this.regionSetting);
@@ -247,6 +280,7 @@ export class GlmUsageClient {
     let emptyRegion: GlmRegion | undefined;
 
     for (const region of regions) {
+      // 两种鉴权方式：官方的裸 Key 在前，带 Bearer 前缀的作兜底。
       const schemes = [this.apiKey, `Bearer ${this.apiKey}`];
       for (const authorization of schemes) {
         try {
@@ -259,7 +293,7 @@ export class GlmUsageClient {
               planName: lookup.planName,
             };
           }
-          // The key authenticated but has no plan quota on this platform.
+          // Key 在该平台鉴权通过，但该平台没有任何套餐配额。
           sawEmpty = true;
           emptyRegion = region;
         } catch (error) {
@@ -278,12 +312,12 @@ export class GlmUsageClient {
     }
 
     if (sawEmpty) {
-      // The key is valid on a platform but has no Coding Plan quota there.
+      // Key 在某平台有效，但该账号未订阅 Coding Plan 套餐。
       setDetectedRegion(emptyRegion!);
       return {all: [], region: emptyRegion, fetchedAt: Date.now()};
     }
 
-    // Every platform failed with an error.
+    // 所有平台都以错误收场：抛出最后一次的错误。
     if (lastError instanceof GlmUsageError) {
       throw lastError;
     }
@@ -293,8 +327,8 @@ export class GlmUsageClient {
   }
 
   /**
-   * Raw diagnostic probe: every region x auth scheme with the HTTP status
-   * and the raw response body, for troubleshooting key/platform problems.
+   * 诊断用原始探测：遍历每个平台 × 每种鉴权方式，返回 HTTP 状态码与
+   * 原始响应体（超长截断），用于排查 Key 或平台连通性问题。
    */
   async fetchDiagnostics(regionSetting = this.regionSetting): Promise<string> {
     const lines: string[] = [];
@@ -324,6 +358,7 @@ export class GlmUsageClient {
     return lines.join('\n');
   }
 
+  /** 返回脱敏后的 API Key（保留首尾各几位与总长度），用于诊断输出。 */
   private maskedKey(): string {
     const key = this.apiKey;
     if (key.length <= 12) {
@@ -332,6 +367,10 @@ export class GlmUsageClient {
     return `${key.slice(0, 6)}…${key.slice(-4)} (${key.length} chars)`;
   }
 
+  /**
+   * 发一次原始 GET 请求并返回 HTTP 状态码与响应体文本，不做解析与错误包装
+   * （超时由 AbortController 按 REQUEST_TIMEOUT_MS 中止）。仅供诊断命令使用。
+   */
   private async rawRequest(
     region: GlmRegion,
     authorization: string,
@@ -355,6 +394,10 @@ export class GlmUsageClient {
     }
   }
 
+  /**
+   * 请求监控接口并解析配额窗口列表：兼容 data 为数组、data/顶层带 limits
+   * 数组等多种响应形态；识别包在 HTTP 200 里的业务错误并抛为 GlmUsageError。
+   */
   private async requestQuotaLimits(
     region: GlmRegion,
     authorization: string,
@@ -388,10 +431,10 @@ export class GlmUsageClient {
         limits?: unknown[];
       };
 
-      // Both platforms wrap errors in HTTP 200 responses, e.g.
-      // {code: 401, msg: 'token expired or incorrect', success: false}.
-      // Treat these as real errors instead of "no quota" so the probe
-      // logic can fall through to the next platform/auth scheme.
+      // 两个平台都把业务错误包在 HTTP 200 响应里，例如
+      // {code: 401, msg: 'token expired or incorrect', success: false}。
+      // 这里要把它识别为真实错误而非“无配额”，让外层探测逻辑
+      // 得以继续尝试下一个平台/鉴权方式。
       const bizCode = toNumber(payload.code);
       if (
         payload.success === false ||
@@ -403,6 +446,7 @@ export class GlmUsageClient {
         );
       }
 
+      // data 可能直接是数组，也可能是 {limits: [...]}；顶层 limits 作最后兜底。
       const data = payload?.data;
       const limitsRaw = Array.isArray(data)
         ? data
@@ -435,6 +479,7 @@ export class GlmUsageClient {
   }
 }
 
+/** 把配额数值格式化为展示文本：小数保留 1 位，整数按千分位分组。 */
 export function formatLimitValue(value: number): string {
   if (!Number.isInteger(value)) {
     return value.toFixed(1);
@@ -442,12 +487,12 @@ export function formatLimitValue(value: number): string {
   return value.toLocaleString('en-US');
 }
 
-/** Horizontal usage bar, colored like Copilot's usage indicators. */
+/** 用量进度条颜色：按百分比分档（≥90% 红、≥70% 黄、其余蓝），风格对齐 Copilot 的用量指示。 */
 function barColor(pct: number): string {
   return pct >= 90 ? '#e5534b' : pct >= 70 ? '#d4a72c' : '#4c8dff';
 }
 
-/** Theme-aware text colors for the SVG quota blocks. */
+/** 依据当前编辑器亮/暗色主题返回 SVG 配额块的文字颜色（主文字与次要文字）。 */
 function quotaPalette(): {text: string; secondary: string} {
   const kind = vscode.window.activeColorTheme.kind;
   const dark =
@@ -458,19 +503,19 @@ function quotaPalette(): {text: string; secondary: string} {
     : {text: '#1f2328', secondary: '#59636e'};
 }
 
+/** 配额块（内联 SVG）的固定宽度与进度条高度（像素）。 */
 const BLOCK_WIDTH = 240;
 const BAR_HEIGHT = 6;
 
 /**
- * Copilot-style quota block: an oversized bold percentage with a
- * normal-weight "used" beside it, the credit counts below and the filled
- * bar — all composed as ONE inline SVG carried by a `data:` URI.
+ * Copilot 风格的配额块：超大加粗的百分比 + 旁边正常字重的 "used"，下方是
+ * 已用数值/总量，再下是进度条 —— 全部画成一张内联 SVG，用 `data:` URI
+ * 嵌入 img 标签。
  *
- * Markdown rendering can't produce this layout: headings are always bold,
- * and the hover sanitizer strips font-size/font-weight inline styles (only
- * color, background-color and border-radius survive on spans). Inside an
- * SVG, per-`tspan` sizing/weight is exact, and the row spacing is
- * pixel-controlled, so there are no blank paragraph gaps around the bar.
+ * Markdown 排版做不出这种布局：标题永远加粗，且悬浮净化器会剥离
+ * font-size/font-weight 等内联样式（span 上只有 color、background-color
+ * 和 border-radius 幸存）。而在 SVG 内部，每个 tspan 的字号/字重精确
+ * 可控，行距按像素排布，进度条四周也不会出现空段落间隙。
  */
 function quotaBlockHtml(limit: PlanLimitInfo): string {
   const palette = quotaPalette();
@@ -479,8 +524,8 @@ function quotaBlockHtml(limit: PlanLimitInfo): string {
   const hasCounts =
     limit.currentValue !== undefined && limit.total !== undefined;
 
-  // Vertical layout (baseline coords): percentage line at 15, counts line
-  // at 33, bar at 41. Without one of the rows the elements shift up.
+  // 垂直布局（基线坐标）：百分比行在 y=15，数值行在 y=33，进度条在 y=41；
+  // 缺少某一行时，下方元素整体上移。
   const countsY = 33;
   const barY = hasCounts ? 41 : 21;
   const blockHeight = barY + BAR_HEIGHT;
@@ -505,7 +550,7 @@ function quotaBlockHtml(limit: PlanLimitInfo): string {
       ? Math.max(0, Math.min(100, limit.percentage))
       : 0;
   const fill = barColor(Math.round(clamped));
-  // Keep a minimum fill so tiny percentages stay visible.
+  // 保证最小填充宽度，避免极小百分比画出来不可见。
   const fillWidth = Math.max(
     (BLOCK_WIDTH * clamped) / 100,
     clamped > 0 ? BAR_HEIGHT : 0,
@@ -524,7 +569,7 @@ function quotaBlockHtml(limit: PlanLimitInfo): string {
   return `<img alt='${pct !== undefined ? `${pct}% used` : 'quota usage'}' src='${src}' width='${BLOCK_WIDTH}' height='${blockHeight}'>`;
 }
 
-/** "Resets Sep 1 at 8:00 AM" — Copilot-style reset hint. */
+/** 生成 Copilot 风格的重置提示，如 "Resets Sep 1 at 8:00 AM"；无重置时间返回空串。 */
 function formatResetTime(resetAt: number | undefined): string {
   if (!resetAt) {
     return '';
@@ -541,6 +586,13 @@ function formatResetTime(resetAt: number | undefined): string {
   return `Resets ${formatted}`;
 }
 
+/**
+ * 组装用量悬浮提示的完整 Markdown 内容。
+ *
+ * @param usage 已抓取的套餐用量；为 undefined 时走错误或加载分支。
+ * @param error 最近一次抓取的错误文案（仅在没有任何 usage 数据时展示）。
+ * @param requestCount 已发出的监控请求数，展示在底部状态行。
+ */
 export function buildUsageTooltip(
   usage: PlanUsage | undefined,
   error: string | undefined,
@@ -565,7 +617,7 @@ export function buildUsageTooltip(
       markdown.appendMarkdown(
         `**${label}**${reset ? ` &nbsp;·&nbsp; <span style="opacity:.65;">${reset}</span>` : ''}\n\n`,
       );
-      // Percentage + counts + bar as one tightly-spaced SVG block.
+      // 百分比 + 数值 + 进度条合成一个紧凑排布的 SVG 块。
       markdown.appendMarkdown(`${quotaBlockHtml(limit)}\n\n`);
     }
     if (usage.all.length === 0) {

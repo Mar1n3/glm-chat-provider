@@ -20,10 +20,20 @@ import {
 } from './convert';
 import {getConfiguredTemperature} from './temperature';
 
+/**
+ * 在 VS Code 模型信息上扩展的内部类型：额外挂一个 __glmApiKey 字段，
+ * 用于把 API Key 绑定到具体模型上。后续发起聊天请求时可直接从模型
+ * 信息里取到密钥，而不必再次访问全局凭据存储。
+ */
 type ModelWithApiKey = vscode.LanguageModelChatInformation & {
   __glmApiKey?: string;
 };
 
+/**
+ * VS Code 的 PrepareLanguageModelChatModelOptions，并扩展可选的
+ * configuration 字段：用于承载用户在聊天模型选择器上保存的配置
+ * （例如本扩展写入的 apiKey）。
+ */
 type PrepareLanguageModelChatInfoOptions =
   vscode.PrepareLanguageModelChatModelOptions & {
     readonly configuration?: {
@@ -32,6 +42,11 @@ type PrepareLanguageModelChatInfoOptions =
     };
   };
 
+/**
+ * 把一条 GLM 模型定义转换成 VS Code 模型选择器所需的
+ * LanguageModelChatInformation（带类型字段的 ModelPickerChatInformation）。
+ * 支持思维链的模型会附加 configurationSchema，供选择器展示 thinking 配置。
+ */
 function toChatInfo(m: GlmModelDefinition): ModelPickerChatInformation {
   return {
     id: m.id,
@@ -53,10 +68,18 @@ function toChatInfo(m: GlmModelDefinition): ModelPickerChatInformation {
   };
 }
 
+/**
+ * 预先把全部 GLM 模型定义转换好的模型信息列表（不含 apiKey 的公共部分），
+ * 供每次 provideLanguageModelChatInformation 复用，避免重复转换。
+ */
 const TYPED_MODELS: ModelPickerChatInformation[] = GLM_MODEL_DEFINITIONS.map(
   m => toChatInfo(m),
 );
 
+/**
+ * 用量回调类型：当一次请求拿到 token 用量时，以 OpenAI 形状的字段
+ * 通知给外部（例如本扩展的用量统计面板）。
+ */
 export type UsageCallback = (usage: {
   prompt_tokens: number;
   completion_tokens: number;
@@ -64,6 +87,12 @@ export type UsageCallback = (usage: {
   cached_tokens?: number;
 }) => void;
 
+/**
+ * GLM 聊天提供者：实现 VS Code 的 LanguageModelChatProvider 接口。
+ * 职责包括：向 VS Code 上报可用模型列表（并绑定 apiKey）、处理一次
+ * 聊天请求（区域候选回退、流式增量上报、工具调用拼装、思维内容透传）、
+ * 在流结束时上报 token 用量，以及把 API 错误映射成友好提示。
+ */
 export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   private readonly _onDidChangeLanguageModelChatInformation =
     new vscode.EventEmitter<void>();
@@ -76,15 +105,23 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     private readonly onUsage?: UsageCallback,
   ) {}
 
+  /** 通知 VS Code 模型信息已变化，促使其重新拉取模型列表。 */
   fireLanguageModelChatInformationChange(): void {
     this._onDidChangeLanguageModelChatInformation.fire();
   }
 
+  /**
+   * 返回当前可用的模型列表（VS Code 会在需要时调用本方法）。
+   * @param options 携带用户配置，其中的 apiKey 用于判断是否已配置密钥
+   * @param token 取消令牌（列出模型是纯本地操作，本实现不使用）
+   * 配置缺失或 apiKey 为空时返回空列表；否则返回全部模型，并把 apiKey
+   * 挂在每个模型信息（__glmApiKey）上，供后续聊天请求直接使用。
+   */
   async provideLanguageModelChatInformation(
     options: PrepareLanguageModelChatInfoOptions,
     token: vscode.CancellationToken,
   ): Promise<vscode.LanguageModelChatInformation[]> {
-    void token;
+    void token; // 显式标记该参数未使用，避免触发 lint 告警。
     if (options.configuration === undefined) {
       return [];
     }
@@ -100,6 +137,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     return this.modelsWithApiKey(apiKey);
   }
 
+  /** 为每个预转换模型克隆一份并挂上 __glmApiKey，形成最终上报的模型列表。 */
   private modelsWithApiKey(
     apiKey: string,
   ): vscode.LanguageModelChatInformation[] {
@@ -109,6 +147,15 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     })) as unknown as vscode.LanguageModelChatInformation[];
   }
 
+  /**
+   * 处理一次聊天请求（语言模型提供者的核心入口）。
+   * 密钥来源：优先使用模型信息上挂的 __glmApiKey，没有则向 AuthManager
+   * 获取（必要时弹窗提示用户输入）。随后按区域候选顺序逐个尝试
+   * streamResponse：只有 401/403 这类鉴权错误（发生在产生任何流内容
+   * 之前）才回退到下一个平台；成功后 setDetectedRegion 缓存该平台，
+   * 后续请求直接复用、不再探测。最终捕获到的错误经 throwMappedError
+   * 转换成友好错误后抛出。
+   */
   async provideLanguageModelChatResponse(
     model: vscode.LanguageModelChatInformation,
     messages: readonly vscode.LanguageModelChatRequestMessage[],
@@ -116,6 +163,8 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken,
   ): Promise<void> {
+    // 密钥来源：优先用模型信息上挂的 __glmApiKey；缺失时向 AuthManager
+    // 获取（必要时弹窗提示用户输入）。
     const modelApiKey = (model as ModelWithApiKey).__glmApiKey;
     const apiKey =
       modelApiKey && modelApiKey.trim().length > 0
@@ -145,14 +194,14 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
             progress,
             token,
           );
-          // Remember the platform that worked so later requests skip probing.
+          // 记住成功的平台并缓存，后续请求可跳过区域探测。
           setDetectedRegion(region);
           lastError = undefined;
           break;
         } catch (error) {
           lastError = error;
-          // Only fall back to the next platform on auth errors, which happen
-          // before any stream content is produced.
+          // 只有鉴权错误（401/403）才回退到下一个平台：这类错误发生在
+          // 产生任何流内容之前，回退不会造成内容重复输出。
           const canFallback =
             index < regions.length - 1 &&
             error instanceof GlmApiError &&
@@ -171,6 +220,15 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     }
   }
 
+  /**
+   * 根据模型的 thinkingSupport 类型与用户配置，解析出请求体需要的
+   * thinking 开关和 reasoning_effort 参数。
+   * @param modelId 模型 id，用于查找模型定义、判断其思维支持类型
+   * @param options 聊天选择器传入的配置，取值优先级高于全局设置
+   * 支持类型含义：on-off 可开关；on-off-effort 可开关且可选推理力度；
+   * always-on-effort 强制开启、只能调力度；其余视为不支持思维链。
+   * 返回空对象表示本次请求不带任何 thinking 相关字段。
+   */
   private resolveThinking(
     modelId: string,
     options?: ModelConfigurationOptions,
@@ -183,8 +241,8 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     const alwaysOnWithEffort = def?.thinkingSupport === 'always-on-effort';
 
     if (alwaysOnWithEffort) {
-      // GLM-5.3 series: thinking is always enabled and cannot be disabled.
-      // Only reasoning_effort (low/high/max) can be controlled.
+      // GLM-5.3 系列：思维链强制开启且不可关闭，只能控制
+      // reasoning_effort（low/high/max）。
       const configuredMode =
         options?.modelConfiguration?.thinkingMode ??
         options?.configuration?.thinkingMode;
@@ -203,7 +261,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       if (mode === 'max') {
         return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
       }
-      // API default reasoning_effort is 'max'; only send the always-on flag.
+      // API 默认 reasoning_effort 就是 'max'，因此只需传强制开启标志。
       return {thinking: {type: 'enabled'}};
     }
 
@@ -224,9 +282,9 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
         }
       } else {
         if (configuredMode === 'enabled') {
-          // For GLM 5.1+/5/4.7 series, thinking is enabled by default.
-          // Sending clear_thinking alongside type: 'enabled' causes a validation
-          // error on newer models. Only send {type: 'enabled'} without extra fields.
+          // GLM 5.1+/5/4.7 系列默认已开启思维链；若在 type: 'enabled' 之外
+          // 附带 clear_thinking 等额外字段，新模型会校验报错，因此只传
+          // {type: 'enabled'}，不带任何额外字段。
           return {thinking: {type: 'enabled'}};
         }
         if (configuredMode === 'disabled' && canDisable) {
@@ -261,6 +319,14 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     return {};
   }
 
+  /**
+   * 建立 GLM 流式请求并逐 chunk 消费，把增量内容通过 progress 上报。
+   * 流程：准备温度与 thinking 参数 → 调用 client.streamChat 建流 →
+   * 逐 chunk 处理每个 choice：reportDelta 上报思维/正文增量文本；
+   * collectToolCalls 按 index 累积工具调用分片；finish_reason 为
+   * 'tool_calls' 时立即上报已完成的工具调用。流结束后再统一上报一次
+   * 工具调用（兜底），最后上报 token 用量。
+   */
   private async streamResponse(
     client: GlmApiClient,
     model: vscode.LanguageModelChatInformation,
@@ -296,6 +362,8 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
         temperature,
         thinking,
         reasoningEffort,
+        // API 回传用量时：暂存到 lastUsage（流结束后上报给 VS Code），
+        // 并转发给外部监听者（如用量面板）。
         onUsage: usage => {
           lastUsage = usage;
           this.onUsage?.(usage);
@@ -305,6 +373,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     );
 
     for await (const chunk of stream) {
+      // 用户已取消请求时直接返回，不再处理和上报后续内容。
       if (token.isCancellationRequested) {
         return;
       }
@@ -323,10 +392,10 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   }
 
   /**
-   * Reports token usage to the chat UI so the context-window indicator has
-   * data. This mirrors VS Code's first-party providers: emit a
-   * `LanguageModelDataPart` with the `usage` MIME type containing
-   * OpenAI-shaped usage JSON at the end of the response stream.
+   * 在流结束时向聊天界面上报 token 用量：发出一个 MIME 类型为 'usage'
+   * 的 LanguageModelDataPart，载荷是 OpenAI 形状的 usage JSON
+   * （cached_tokens 放在 prompt_tokens_details 里）。VS Code 聊天界面
+   * 的上下文窗口指示器依靠它来显示本次请求的 token 消耗。
    */
   private reportUsage(
     usage:
@@ -356,6 +425,12 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     );
   }
 
+  /**
+   * 上报单个 chunk 的增量内容。
+   * 先处理 reasoning_content 字段（思维链增量文本，不在 openai 官方类型
+   * 定义中，故先转成 Record 再读取），包装成 LanguageModelThinkingPart
+   * 后上报；再处理常规正文增量，包装成 LanguageModelTextPart 上报。
+   */
   private reportDelta(
     delta: ChatCompletionChunk.Choice.Delta,
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
@@ -375,6 +450,13 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     }
   }
 
+  /**
+   * 累积流式到达的工具调用分片。
+   * 流式模式下，同一个工具调用的 id、函数名和参数 JSON 会拆成多个分片、
+   * 按 call.index 分批到达：这里按 index 找到（或新建）对应的 builder，
+   * 把各字段逐段拼接，等 finish_reason 或流结束时由 reportToolCalls
+   * 统一上报。
+   */
   private collectToolCalls(
     toolCalls: ChatCompletionChunk.Choice.Delta.ToolCall[] | undefined,
     builders: Map<number, ToolCallBuilder>,
@@ -404,6 +486,11 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     }
   }
 
+  /**
+   * 把累积完成的工具调用统一上报为 LanguageModelToolCallPart。
+   * 缺少 id 或 name 的条目视为不完整、直接跳过；上报完成后清空缓存，
+   * 以便同一流中后续新的工具调用从头累积。
+   */
   private reportToolCalls(
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     builders: Map<number, ToolCallBuilder>,
@@ -429,6 +516,11 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     builders.clear();
   }
 
+  /**
+   * 把 GLM API 错误映射成面向用户的友好错误后抛出。
+   * 401：删除已失效的 API Key 并提示用户重新设置；429：提示触发限流；
+   * 其余 GlmApiError：附带原始错误信息；非 GlmApiError 的异常原样抛出。
+   */
   private async throwMappedError(error: unknown): Promise<never> {
     if (!(error instanceof GlmApiError)) {
       throw error;
@@ -451,6 +543,11 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     throw error;
   }
 
+  /**
+   * 估算一段文本或一条消息的 token 数（粗略近似：每 4 个字符折算
+   * 1 个 token，向上取整）。消息形式只累计其中文本部件的字符数；
+   * model 与 token 参数在本实现中未使用。
+   */
   provideTokenCount(
     model: vscode.LanguageModelChatInformation,
     text: string | vscode.LanguageModelChatRequestMessage,
