@@ -7,13 +7,15 @@ import * as vscode from 'vscode';
 export function createThinkingPart(
   value: string,
 ): vscode.LanguageModelResponsePart | undefined {
-  const ThinkingPartCtor = (vscode as typeof vscode & {
-    LanguageModelThinkingPart?: new (
-      value: string,
-      id?: string,
-      metadata?: {readonly [key: string]: unknown},
-    ) => vscode.LanguageModelResponsePart;
-  }).LanguageModelThinkingPart;
+  const ThinkingPartCtor = (
+    vscode as typeof vscode & {
+      LanguageModelThinkingPart?: new (
+        value: string,
+        id?: string,
+        metadata?: {readonly [key: string]: unknown},
+      ) => vscode.LanguageModelResponsePart;
+    }
+  ).LanguageModelThinkingPart;
 
   if (typeof ThinkingPartCtor !== 'function') {
     return undefined;

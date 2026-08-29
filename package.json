@@ -2,7 +2,7 @@
   "name": "glm-chat-provider",
   "displayName": "GLM Chat Provider",
   "description": "Z.AI GLM models as VS Code Language Model Chat Provider",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "publisher": "DenizhanDaklr",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -33,6 +33,15 @@
     "onLanguageModelChatProvider:zai"
   ],
   "contributes": {
+    "icons": {
+      "glm-zhipu": {
+        "description": "ZHIPU (bigmodel.cn) logo — official Z mark",
+        "default": {
+          "fontPath": "./media/glm-logo.woff",
+          "fontCharacter": "\\e001"
+        }
+      }
+    },
     "languageModelChatProviders": [
       {
         "vendor": "zai",
@@ -56,18 +65,40 @@
     "configuration": {
       "title": "GLM Chat Provider",
       "properties": {
+        "glm-chat-provider.apiRegion": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "global",
+            "china"
+          ],
+          "enumDescriptions": [
+            "Detect automatically (probes both platforms)",
+            "Z.AI international — api.z.ai",
+            "ZHIPU China — open.bigmodel.cn"
+          ],
+          "description": "Platform your GLM Coding Plan subscription is on. 'auto' probes both platforms and uses the one that recognizes your API key.",
+          "scope": "application"
+        },
         "glm-chat-provider.defaultThinkingMode": {
           "type": "string",
           "default": "auto",
           "enum": [
             "auto",
             "enabled",
-            "disabled"
+            "disabled",
+            "low",
+            "high",
+            "max"
           ],
           "enumDescriptions": [
             "Let the model decide when to think (default behavior)",
             "Always enable thinking mode",
-            "Always disable thinking mode"
+            "Always disable thinking mode",
+            "Thinking enabled, low effort (GLM-5.3+)",
+            "Thinking enabled, high effort (GLM-5.2+)",
+            "Thinking enabled, max effort (GLM-5.2+)"
           ],
           "description": "Default thinking mode for GLM models that support it (GLM-4.5+)"
         },
@@ -77,6 +108,19 @@
           "minimum": 0,
           "maximum": 1,
           "description": "Default temperature when 'Custom' is selected in model picker. Use 'GLM: Set Temperature' command for presets + custom.",
+          "scope": "application"
+        },
+        "glm-chat-provider.showPlanUsage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show GLM Coding Plan usage (5h token quota) in the status bar. When disabled, falls back to showing the session request count.",
+          "scope": "application"
+        },
+        "glm-chat-provider.usageRefreshIntervalSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 0,
+          "description": "How often (in seconds) to refresh the Coding Plan usage in the status bar. Set to 0 to disable periodic refresh. Minimum effective interval is 30s.",
           "scope": "application"
         }
       }
@@ -101,6 +145,14 @@
       {
         "command": "glm-chat-provider.setTemperature",
         "title": "GLM: Set Temperature"
+      },
+      {
+        "command": "glm-chat-provider.refreshUsage",
+        "title": "GLM: Refresh Plan Usage"
+      },
+      {
+        "command": "glm-chat-provider.usageDiagnostics",
+        "title": "GLM: Show Usage Diagnostics"
       }
     ]
   },
@@ -110,6 +162,7 @@
     "bundle": "node bundle.mjs",
     "compile": "tsc",
     "watch": "tsc -watch -p ./",
+    "package": "npm version patch --no-git-tag-version && npx @vscode/vsce package --no-dependencies",
     "lint": "gts lint",
     "clean": "gts clean",
     "fix": "gts fix",
@@ -123,6 +176,10 @@
     "esbuild": "^0.28.1",
     "eslint": "9.39.2",
     "gts": "^7.0.0",
+    "svg2ttf": "^6.1.0",
+    "svgicons2svgfont": "^15.0.1",
+    "ttf2woff": "^3.0.0",
+    "ttf2woff2": "^8.0.1",
     "typescript": "^5.6.3"
   },
   "dependencies": {

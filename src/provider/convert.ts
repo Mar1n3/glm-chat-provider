@@ -22,7 +22,9 @@ type MessageAccumulator = {
   toolResult?: ToolResult;
 };
 
-export function parseToolArguments(argumentsText: string): Record<string, unknown> {
+export function parseToolArguments(
+  argumentsText: string,
+): Record<string, unknown> {
   const parsed = secureJsonParse.safeParse(argumentsText || '{}');
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return {};
@@ -128,7 +130,10 @@ function mapRole(
   role: vscode.LanguageModelChatMessageRole,
 ): 'user' | 'assistant' | 'system' {
   return match(role)
-    .with(vscode.LanguageModelChatMessageRole.Assistant, () => 'assistant' as const)
+    .with(
+      vscode.LanguageModelChatMessageRole.Assistant,
+      () => 'assistant' as const,
+    )
     .with(vscode.LanguageModelChatMessageRole.User, () => 'user' as const)
     .otherwise(() => 'system' as const);
 }

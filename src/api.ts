@@ -1,6 +1,7 @@
 import type * as vscode from 'vscode';
 import OpenAI from 'openai';
 import {match} from 'ts-pattern';
+import {chatBaseUrl, type GlmRegion} from './region';
 import type {
   ChatCompletionChunk,
   ChatCompletionCreateParamsNonStreaming,
@@ -8,8 +9,6 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions/completions';
-
-const BASE_URL = 'https://api.z.ai/api/coding/paas/v4';
 
 export type GlmContentPart =
   | {type: 'text'; text: string}
@@ -49,7 +48,12 @@ export interface ChatOptions {
   stop?: string[];
   thinking?: Record<string, unknown>;
   reasoningEffort?: string;
-  onUsage?: (usage: {prompt_tokens: number; completion_tokens: number; total_tokens: number; cached_tokens?: number}) => void;
+  onUsage?: (usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    cached_tokens?: number;
+  }) => void;
 }
 
 export class GlmApiError extends Error {
@@ -85,10 +89,10 @@ function prepareApiKeyForOpenAIClient(apiKey: string): string {
 export class GlmApiClient {
   private readonly client: OpenAI;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, region: GlmRegion = 'global') {
     this.client = new OpenAI({
       apiKey: prepareApiKeyForOpenAIClient(apiKey),
-      baseURL: BASE_URL,
+      baseURL: chatBaseUrl(region),
     });
   }
 
@@ -262,7 +266,9 @@ export class GlmApiClient {
             prompt_tokens: chunk.usage.prompt_tokens,
             completion_tokens: chunk.usage.completion_tokens,
             total_tokens: chunk.usage.total_tokens,
-            cached_tokens: (chunk.usage as {prompt_tokens_details?: {cached_tokens?: number}}).prompt_tokens_details?.cached_tokens,
+            cached_tokens: (
+              chunk.usage as {prompt_tokens_details?: {cached_tokens?: number}}
+            ).prompt_tokens_details?.cached_tokens,
           });
         }
 

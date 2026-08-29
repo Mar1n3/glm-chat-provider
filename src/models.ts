@@ -43,6 +43,42 @@ function buildModelConfigurationSchema(thinkingSupport?: ThinkingSupport) {
     } as const;
   }
 
+  if (thinkingSupport === 'always-on-effort') {
+    return {
+      properties: {
+        thinkingMode: {
+          type: 'string',
+          title: 'Thinking',
+          enum: ['low', 'high', 'max'],
+          enumItemLabels: ['Low', 'High', 'Max'],
+          enumDescriptions: [
+            'Enabled, low effort — lightweight reasoning',
+            'Enabled, high effort — enhanced reasoning',
+            'Enabled, max effort — deep reasoning (recommended)',
+          ],
+          default: 'max',
+          group: 'navigation',
+        },
+        temperature: {
+          type: 'string',
+          title: 'Temperature',
+          enum: ['balanced', 'precise', 'creative', 'max', 'custom'],
+          enumItemLabels: ['Balanced', 'Precise', 'Creative', 'Max', 'Custom'],
+          enumDescriptions: [
+            'Standard (0.7)',
+            'Low, good for code (0.2)',
+            'Higher, good for writing (0.9)',
+            'Highest (1.0, recommended for this model)',
+            'Custom value set in settings',
+          ],
+          default: 'max',
+          description: 'Presets (range: 0.0 – 1.0)',
+          group: 'navigation',
+        },
+      },
+    } as const;
+  }
+
   if (thinkingSupport === 'on-off-effort') {
     return {
       properties: {
@@ -115,8 +151,10 @@ function buildModelConfigurationSchema(thinkingSupport?: ThinkingSupport) {
   } as const;
 }
 
-export const MODEL_CONFIGURATION_SCHEMA_BASE = buildModelConfigurationSchema('on-off');
-export const MODEL_CONFIGURATION_SCHEMA_EFFORT = buildModelConfigurationSchema('on-off-effort');
+export const MODEL_CONFIGURATION_SCHEMA_BASE =
+  buildModelConfigurationSchema('on-off');
+export const MODEL_CONFIGURATION_SCHEMA_EFFORT =
+  buildModelConfigurationSchema('on-off-effort');
 
 export function getModelConfigurationSchema(
   thinkingSupport?: ThinkingSupport,
@@ -124,10 +162,11 @@ export function getModelConfigurationSchema(
   return buildModelConfigurationSchema(thinkingSupport);
 }
 
-export type ModelConfigurationOptions = vscode.ProvideLanguageModelChatResponseOptions & {
-  readonly modelConfiguration?: Record<string, unknown>;
-  readonly configuration?: Record<string, unknown>;
-};
+export type ModelConfigurationOptions =
+  vscode.ProvideLanguageModelChatResponseOptions & {
+    readonly modelConfiguration?: Record<string, unknown>;
+    readonly configuration?: Record<string, unknown>;
+  };
 
 export type ModelPickerChatInformation = vscode.LanguageModelChatInformation & {
   readonly isUserSelectable: boolean;
@@ -137,7 +176,11 @@ export type ModelPickerChatInformation = vscode.LanguageModelChatInformation & {
   readonly configurationSchema?: ReturnType<typeof getModelConfigurationSchema>;
 };
 
-export type ThinkingSupport = 'on-off' | 'always-on' | 'on-off-effort';
+export type ThinkingSupport =
+  | 'on-off'
+  | 'always-on'
+  | 'on-off-effort'
+  | 'always-on-effort';
 
 export interface GlmModelDefinition {
   id: string;
@@ -154,11 +197,34 @@ export interface GlmModelDefinition {
   };
   /** 'on-off': thinking can be enabled/disabled via API.
    *  'always-on': thinking is always active and cannot be disabled.
-   *  'on-off-effort': thinking can be enabled/disabled, with multiple effort levels (high/max). */
+   *  'on-off-effort': thinking can be enabled/disabled, with multiple effort levels (high/max).
+   *  'always-on-effort': thinking is always active and cannot be disabled, with effort levels (low/high/max). */
   thinkingSupport: ThinkingSupport;
 }
 
 export const GLM_MODEL_DEFINITIONS: readonly GlmModelDefinition[] = [
+  {
+    id: 'glm-5.3',
+    name: 'GLM-5.3',
+    family: 'glm',
+    version: '5.3',
+    detail: 'Z.AI',
+    maxInputTokens: 1000000,
+    maxOutputTokens: 131072,
+    capabilities: {imageInput: false, toolCalling: true, thinking: true},
+    thinkingSupport: 'always-on-effort',
+  },
+  {
+    id: 'glm-5.3-flash',
+    name: 'GLM-5.3-Flash',
+    family: 'glm',
+    version: '5.3-flash',
+    detail: 'Z.AI',
+    maxInputTokens: 1000000,
+    maxOutputTokens: 131072,
+    capabilities: {imageInput: true, toolCalling: true, thinking: true},
+    thinkingSupport: 'always-on-effort',
+  },
   {
     id: 'glm-5.2',
     name: 'GLM-5.2',
@@ -315,17 +381,21 @@ export const GLM_MODEL_DEFINITIONS: readonly GlmModelDefinition[] = [
   },
 ];
 
-export const GLM_MODELS: vscode.LanguageModelChatInformation[] = GLM_MODEL_DEFINITIONS.map(
-  (m) =>
-    ({
-      id: m.id,
-      name: m.name,
-      family: m.family,
-      version: m.version,
-      tooltip: 'Z.AI',
-      detail: 'Z.AI',
-      maxInputTokens: m.maxInputTokens,
-      maxOutputTokens: m.maxOutputTokens,
-      capabilities: {imageInput: m.capabilities.imageInput, toolCalling: m.capabilities.toolCalling},
-    }) as vscode.LanguageModelChatInformation,
-);
+export const GLM_MODELS: vscode.LanguageModelChatInformation[] =
+  GLM_MODEL_DEFINITIONS.map(
+    m =>
+      ({
+        id: m.id,
+        name: m.name,
+        family: m.family,
+        version: m.version,
+        tooltip: 'Z.AI',
+        detail: 'Z.AI',
+        maxInputTokens: m.maxInputTokens,
+        maxOutputTokens: m.maxOutputTokens,
+        capabilities: {
+          imageInput: m.capabilities.imageInput,
+          toolCalling: m.capabilities.toolCalling,
+        },
+      }) as vscode.LanguageModelChatInformation,
+  );

@@ -1,12 +1,9 @@
 import * as vscode from 'vscode';
-import { match } from 'ts-pattern';
-import {
-  GlmApiClient,
-  GlmApiError,
-  type GlmTool,
-} from '../api';
-import type { ChatCompletionChunk } from 'openai/resources/chat/completions/completions';
-import type { AuthManager } from '../auth';
+import {match} from 'ts-pattern';
+import {GlmApiClient, GlmApiError} from '../api';
+import type {ChatCompletionChunk} from 'openai/resources/chat/completions/completions';
+import type {AuthManager} from '../auth';
+import {pickChatRegions, setDetectedRegion} from '../region';
 import {
   GLM_MODEL_DEFINITIONS,
   GLM_MODELS,
@@ -15,10 +12,15 @@ import {
   type ModelConfigurationOptions,
   type ModelPickerChatInformation,
 } from '../models';
-export { GLM_MODELS };
-import { createThinkingPart } from './thinking';
-import { convertMessages, convertTools, parseToolArguments, type ToolCallBuilder } from './convert';
-import { getConfiguredTemperature } from './temperature';
+export {GLM_MODELS};
+import {createThinkingPart} from './thinking';
+import {
+  convertMessages,
+  convertTools,
+  parseToolArguments,
+  type ToolCallBuilder,
+} from './convert';
+import {getConfiguredTemperature} from './temperature';
 
 type ModelWithApiKey = vscode.LanguageModelChatInformation & {
   __glmApiKey?: string;
@@ -48,7 +50,7 @@ function toChatInfo(m: GlmModelDefinition): ModelPickerChatInformation {
       imageInput: m.capabilities.imageInput,
     },
     ...(m.capabilities.thinking
-      ? { configurationSchema: getModelConfigurationSchema(m.thinkingSupport) }
+      ? {configurationSchema: getModelConfigurationSchema(m.thinkingSupport)}
       : {}),
   };
 }
@@ -74,7 +76,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   constructor(
     private readonly authManager: AuthManager,
     private readonly onUsage?: UsageCallback,
-  ) { }
+  ) {}
 
   fireLanguageModelChatInformationChange(): void {
     this._onDidChangeLanguageModelChatInformation.fire();
@@ -129,14 +131,43 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     }
 
     try {
-      await this.streamResponse(
-        new GlmApiClient(apiKey),
-        model,
-        messages,
-        options,
-        progress,
-        token,
-      );
+      const regionSetting = vscode.workspace
+        .getConfiguration('glm-chat-provider')
+        .get<string>('apiRegion', 'auto');
+      const regions = pickChatRegions(regionSetting);
+      let lastError: unknown;
+
+      for (const [index, region] of regions.entries()) {
+        try {
+          await this.streamResponse(
+            new GlmApiClient(apiKey, region),
+            model,
+            messages,
+            options,
+            progress,
+            token,
+          );
+          // Remember the platform that worked so later requests skip probing.
+          setDetectedRegion(region);
+          lastError = undefined;
+          break;
+        } catch (error) {
+          lastError = error;
+          // Only fall back to the next platform on auth errors, which happen
+          // before any stream content is produced.
+          const canFallback =
+            index < regions.length - 1 &&
+            error instanceof GlmApiError &&
+            (error.statusCode === 401 || error.statusCode === 403);
+          if (!canFallback) {
+            break;
+          }
+        }
+      }
+
+      if (lastError !== undefined) {
+        await this.throwMappedError(lastError);
+      }
     } catch (error) {
       await this.throwMappedError(error);
     }
@@ -151,10 +182,37 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       def?.thinkingSupport === 'on-off' ||
       def?.thinkingSupport === 'on-off-effort';
     const hasEffort = def?.thinkingSupport === 'on-off-effort';
+    const alwaysOnWithEffort = def?.thinkingSupport === 'always-on-effort';
+
+    if (alwaysOnWithEffort) {
+      // GLM-5.3 series: thinking is always enabled and cannot be disabled.
+      // Only reasoning_effort (low/high/max) can be controlled.
+      const configuredMode =
+        options?.modelConfiguration?.thinkingMode ??
+        options?.configuration?.thinkingMode;
+
+      const globalConfig = vscode.workspace
+        .getConfiguration('glm-chat-provider')
+        .get<string>('defaultThinkingMode', 'auto');
+
+      const mode = configuredMode ?? globalConfig;
+      if (mode === 'low') {
+        return {thinking: {type: 'enabled'}, reasoningEffort: 'low'};
+      }
+      if (mode === 'high') {
+        return {thinking: {type: 'enabled'}, reasoningEffort: 'high'};
+      }
+      if (mode === 'max') {
+        return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
+      }
+      // API default reasoning_effort is 'max'; only send the always-on flag.
+      return {thinking: {type: 'enabled'}};
+    }
 
     if (options) {
       const configuredMode =
-        options.modelConfiguration?.thinkingMode ?? options.configuration?.thinkingMode;
+        options.modelConfiguration?.thinkingMode ??
+        options.configuration?.thinkingMode;
 
       if (hasEffort) {
         if (configuredMode === 'high') {
@@ -217,7 +275,19 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
 
     const modelConfig = options as ModelConfigurationOptions;
     const temperature = getConfiguredTemperature(modelConfig);
-    const {thinking, reasoningEffort} = this.resolveThinking(model.id, modelConfig);
+    const {thinking, reasoningEffort} = this.resolveThinking(
+      model.id,
+      modelConfig,
+    );
+
+    let lastUsage:
+      | {
+          prompt_tokens: number;
+          completion_tokens: number;
+          total_tokens: number;
+          cached_tokens?: number;
+        }
+      | undefined;
 
     const stream = client.streamChat(
       model.id,
@@ -228,7 +298,10 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
         temperature,
         thinking,
         reasoningEffort,
-        onUsage: this.onUsage,
+        onUsage: usage => {
+          lastUsage = usage;
+          this.onUsage?.(usage);
+        },
       },
       token,
     );
@@ -248,6 +321,41 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     }
 
     this.reportToolCalls(progress, toolCallBuilders);
+    this.reportUsage(lastUsage, progress);
+  }
+
+  /**
+   * Reports token usage to the chat UI so the context-window indicator has
+   * data. This mirrors VS Code's first-party providers: emit a
+   * `LanguageModelDataPart` with the `usage` MIME type containing
+   * OpenAI-shaped usage JSON at the end of the response stream.
+   */
+  private reportUsage(
+    usage:
+      | {
+          prompt_tokens: number;
+          completion_tokens: number;
+          total_tokens: number;
+          cached_tokens?: number;
+        }
+      | undefined,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+  ): void {
+    if (!usage) {
+      return;
+    }
+    const payload = {
+      prompt_tokens: usage.prompt_tokens,
+      completion_tokens: usage.completion_tokens,
+      total_tokens: usage.total_tokens,
+      prompt_tokens_details: {cached_tokens: usage.cached_tokens ?? 0},
+    };
+    progress.report(
+      new vscode.LanguageModelDataPart(
+        new TextEncoder().encode(JSON.stringify(payload)),
+        'usage',
+      ),
+    );
   }
 
   private reportDelta(
