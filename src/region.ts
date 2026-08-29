@@ -62,11 +62,6 @@ export function pickChatRegions(setting: string | undefined): GlmRegion[] {
   return ['china', 'global'];
 }
 
-/** Region picked for a single-shot client (e.g. connection test). */
-export function pickChatRegion(setting: string | undefined): GlmRegion {
-  return pickChatRegions(setting)[0];
-}
-
 let detectedRegion: GlmRegion | undefined;
 
 /**

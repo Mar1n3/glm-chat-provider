@@ -3,11 +3,18 @@
 src/**
 .gitignore
 tsconfig.json
-eslint.config.mjs
+tsconfig.tsbuildinfo
+eslint.config.cjs
+eslint.ignores.cjs
+.prettierrc.cjs
+.editorconfig
+font-build.cjs
+font-src/**
 **/*.map
 **/*.ts
 node_modules/**
 out/**
 !out/extension.js
 bundle.js
+package-lock.json
 

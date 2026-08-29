@@ -6,13 +6,11 @@ import type {AuthManager} from '../auth';
 import {pickChatRegions, setDetectedRegion} from '../region';
 import {
   GLM_MODEL_DEFINITIONS,
-  GLM_MODELS,
   getModelConfigurationSchema,
   type GlmModelDefinition,
   type ModelConfigurationOptions,
   type ModelPickerChatInformation,
 } from '../models';
-export {GLM_MODELS};
 import {createThinkingPart} from './thinking';
 import {
   convertMessages,

@@ -380,22 +380,3 @@ export const GLM_MODEL_DEFINITIONS: readonly GlmModelDefinition[] = [
     thinkingSupport: 'always-on',
   },
 ];
-
-export const GLM_MODELS: vscode.LanguageModelChatInformation[] =
-  GLM_MODEL_DEFINITIONS.map(
-    m =>
-      ({
-        id: m.id,
-        name: m.name,
-        family: m.family,
-        version: m.version,
-        tooltip: 'Z.AI',
-        detail: 'Z.AI',
-        maxInputTokens: m.maxInputTokens,
-        maxOutputTokens: m.maxOutputTokens,
-        capabilities: {
-          imageInput: m.capabilities.imageInput,
-          toolCalling: m.capabilities.toolCalling,
-        },
-      }) as vscode.LanguageModelChatInformation,
-  );
