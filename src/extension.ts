@@ -8,7 +8,13 @@ import {match} from 'ts-pattern';
 import {GlmApiClient, GlmApiError} from './api';
 import {AuthManager} from './auth';
 import {GlmChatProvider, type UsageCallback} from './provider';
-import {pickChatRegions, regionLabel, setDetectedRegion} from './region';
+import {
+  isOfficialProvider,
+  pickChatRegions,
+  regionLabel,
+  resolveApiProvider,
+  setDetectedRegion,
+} from './region';
 import {
   buildUsageTooltip,
   GlmUsageClient,
@@ -284,10 +290,16 @@ export function activate(context: vscode.ExtensionContext): void {
   let diagnosticsChannel: vscode.OutputChannel | undefined;
 
   // 读取用量相关配置：是否展示套餐用量、定时刷新间隔（秒）。
+  // 自定义服务商（内网/第三方网关）没有套餐监控接口，强制视为不展示。
   const getUsageSettings = () => {
     const config = vscode.workspace.getConfiguration('glm-chat-provider');
+    const {provider} = resolveApiProvider(
+      config.get<string>('apiProvider'),
+      config.get<string>('customBaseUrl'),
+    );
+    const official = isOfficialProvider(provider);
     return {
-      showPlanUsage: config.get<boolean>('showPlanUsage', true),
+      showPlanUsage: official && config.get<boolean>('showPlanUsage', true),
       refreshSeconds: config.get<number>('usageRefreshIntervalSeconds', 300),
     };
   };
@@ -345,7 +357,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // 拉取套餐用量并重绘状态栏。force=false 为非强制模式（30 秒节流），
   // 供定时器与请求后回调使用；force=true 立即执行，供点击/命令触发。
+  // 自定义服务商（getUsageSettings 已把 showPlanUsage 强制置 false）时
+  // 直接跳过：内网/第三方网关没有套餐监控接口。
   const refreshUsage = async (force = true): Promise<void> => {
+    if (!getUsageSettings().showPlanUsage) {
+      return;
+    }
     // 已有拉取在进行中则直接返回，避免并发重复请求监控接口。
     if (usageInFlight) {
       return;

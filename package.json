@@ -65,6 +65,44 @@
     "configuration": {
       "title": "GLM Chat Provider",
       "properties": {
+        "glm-chat-provider.apiProvider": {
+          "type": "string",
+          "default": "zhipu",
+          "enum": [
+            "zhipu",
+            "zai",
+            "custom"
+          ],
+          "enumDescriptions": [
+            "ZHIPU China — open.bigmodel.cn (Coding Plan usage supported)",
+            "Z.AI international — api.z.ai (Coding Plan usage supported)",
+            "Custom provider — your own intranet server or a third-party GLM gateway (usage not available)"
+          ],
+          "description": "API provider to send chat requests to.",
+          "scope": "application"
+        },
+        "glm-chat-provider.customBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL used when apiProvider is 'custom' (e.g. https://gw.corp.local/glm/v4). Used as-is, no path is appended. Leave empty to keep using the official platform.",
+          "scope": "application"
+        },
+        "glm-chat-provider.customApiProtocol": {
+          "type": "string",
+          "default": "chat-completions",
+          "enum": [
+            "chat-completions",
+            "messages",
+            "responses"
+          ],
+          "enumDescriptions": [
+            "OpenAI Chat Completions compatible (most gateways)",
+            "Anthropic Messages compatible",
+            "OpenAI Responses compatible"
+          ],
+          "description": "Wire protocol used by the custom provider.",
+          "scope": "application"
+        },
         "glm-chat-provider.apiRegion": {
           "type": "string",
           "default": "auto",
@@ -78,7 +116,7 @@
             "Z.AI international — api.z.ai",
             "ZHIPU China — open.bigmodel.cn"
           ],
-          "description": "Platform your GLM Coding Plan subscription is on. 'auto' probes both platforms and uses the one that recognizes your API key.",
+          "description": "Deprecated. Use 'apiProvider' instead. Still honored when apiProvider is not customized: 'auto' probes both platforms and uses the one that recognizes your API key.",
           "scope": "application"
         },
         "glm-chat-provider.defaultThinkingMode": {

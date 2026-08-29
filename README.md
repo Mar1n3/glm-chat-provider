@@ -62,6 +62,23 @@ the built-in chat **context window indicator** stays accurate.
 - `china` — ZHIPU `open.bigmodel.cn` only
 - `global` — Z.AI `api.z.ai` only
 
+### Custom API provider (intranet / third-party gateway)
+
+Set `glm-chat-provider.apiProvider` to `custom` to use your own server or a
+third-party GLM gateway instead of the official platforms:
+
+- `glm-chat-provider.customBaseUrl` — full base URL, used as-is (e.g.
+  `https://gw.corp.local/glm/v4`)
+- `glm-chat-provider.customApiProtocol` — wire protocol:
+  - `chat-completions` — OpenAI Chat Completions compatible (default; most
+    gateways)
+  - `messages` — Anthropic Messages compatible
+  - `responses` — OpenAI Responses compatible
+
+Custom providers have no plan-quota monitor, so the status-bar usage indicator
+is hidden automatically. Chat-completions remains the protocol used for the
+official ZHIPU / Z.AI platforms.
+
 ### Thinking modes
 
 Per-model thinking control (also under `GLM: Set Thinking Effort`):
@@ -92,10 +109,13 @@ Precise (0.2), Creative (0.9), Max (1.0), or a custom value.
 
 | Setting | Default | Description |
 |---|---|---|
-| `glm-chat-provider.apiRegion` | `auto` | Platform your plan is on (`auto` / `global` / `china`) |
+| `glm-chat-provider.apiProvider` | `zhipu` | API provider: `zhipu` / `zai` / `custom` |
+| `glm-chat-provider.customBaseUrl` | — | Base URL for the custom provider (used as-is) |
+| `glm-chat-provider.customApiProtocol` | `chat-completions` | Wire protocol for the custom provider |
+| `glm-chat-provider.apiRegion` | `auto` | Official platform selection (deprecated; `apiProvider` takes precedence) |
 | `glm-chat-provider.defaultThinkingMode` | `auto` | Global thinking mode default |
 | `glm-chat-provider.temperature` | `0.7` | Temperature for the "Custom" preset |
-| `glm-chat-provider.showPlanUsage` | `true` | Show plan usage in the status bar |
+| `glm-chat-provider.showPlanUsage` | `true` | Show plan usage in the status bar (official platforms only) |
 | `glm-chat-provider.usageRefreshIntervalSeconds` | `300` | Usage refresh period (0 disables) |
 
 ## How to Use

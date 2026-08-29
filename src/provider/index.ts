@@ -1,9 +1,13 @@
 import * as vscode from 'vscode';
 import {match} from 'ts-pattern';
-import {GlmApiClient, GlmApiError} from '../api';
-import type {ChatCompletionChunk} from 'openai/resources/chat/completions/completions';
+import {GlmApiClient, GlmApiError, type NormalizedStreamChunk} from '../api';
 import type {AuthManager} from '../auth';
-import {pickChatRegions, setDetectedRegion} from '../region';
+import {
+  pickChatRegions,
+  resolveApiProvider,
+  setDetectedRegion,
+  type ApiProtocol,
+} from '../region';
 import {
   GLM_MODEL_DEFINITIONS,
   getModelConfigurationSchema,
@@ -178,9 +182,34 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     }
 
     try {
-      const regionSetting = vscode.workspace
-        .getConfiguration('glm-chat-provider')
-        .get<string>('apiRegion', 'auto');
+      const config = vscode.workspace.getConfiguration('glm-chat-provider');
+      const providerSetting = config.get<string>('apiProvider');
+      const customBaseUrl = config.get<string>('customBaseUrl');
+      const customProtocol = config.get<string>(
+        'customApiProtocol',
+        'chat-completions',
+      );
+      const resolved = resolveApiProvider(providerSetting, customBaseUrl);
+
+      if (resolved.provider === 'custom') {
+        // 自定义服务商：单一端点，无区域探测、无用量功能。
+        const client = new GlmApiClient(apiKey, 'china', {
+          baseUrl: resolved.customBaseUrl!,
+          protocol: customProtocol as ApiProtocol,
+        });
+        await this.streamResponse(
+          client,
+          model,
+          messages,
+          options,
+          progress,
+          token,
+        );
+        return;
+      }
+
+      // 官方平台：按区域候选顺序尝试，鉴权失败时回退另一个平台。
+      const regionSetting = config.get<string>('apiRegion', 'auto');
       const regions = pickChatRegions(regionSetting);
       let lastError: unknown;
 
@@ -378,12 +407,18 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
         return;
       }
 
-      for (const choice of chunk.choices) {
-        this.reportDelta(choice.delta, progress);
-        this.collectToolCalls(choice.delta.tool_calls, toolCallBuilders);
-        if (choice.finish_reason === 'tool_calls') {
-          this.reportToolCalls(progress, toolCallBuilders);
-        }
+      // 统一 chunk 结构：文本增量 / 思维增量 / 工具调用增量 / 结束原因。
+      if (chunk.thinking) {
+        this.reportThinking(chunk.thinking, progress);
+      }
+      if (chunk.text) {
+        progress.report(new vscode.LanguageModelTextPart(chunk.text));
+      }
+      if (chunk.toolCall) {
+        this.collectToolCall(chunk.toolCall, toolCallBuilders);
+      }
+      if (chunk.finishReason === 'tool_calls') {
+        this.reportToolCalls(progress, toolCallBuilders);
       }
     }
 
@@ -426,64 +461,52 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   }
 
   /**
-   * 上报单个 chunk 的增量内容。
-   * 先处理 reasoning_content 字段（思维链增量文本，不在 openai 官方类型
-   * 定义中，故先转成 Record 再读取），包装成 LanguageModelThinkingPart
-   * 后上报；再处理常规正文增量，包装成 LanguageModelTextPart 上报。
+   * 上报思维链增量内容：包装成 LanguageModelThinkingPart 上报。
+   * LanguageModelThinkingPart 是提案 API，旧版本运行时不存在，
+   * createThinkingPart 内部会探测并优雅降级。
    */
-  private reportDelta(
-    delta: ChatCompletionChunk.Choice.Delta,
+  private reportThinking(
+    thinking: string,
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
   ): void {
-    const deltaAny = delta as Record<string, unknown>;
-
-    const reasoningContent = deltaAny.reasoning_content;
-    if (typeof reasoningContent === 'string' && reasoningContent) {
-      const thinkingPart = createThinkingPart(reasoningContent);
-      if (thinkingPart) {
-        progress.report(thinkingPart);
-      }
-    }
-
-    if (delta.content) {
-      progress.report(new vscode.LanguageModelTextPart(delta.content));
+    const thinkingPart = createThinkingPart(thinking);
+    if (thinkingPart) {
+      progress.report(thinkingPart);
     }
   }
 
   /**
    * 累积流式到达的工具调用分片。
    * 流式模式下，同一个工具调用的 id、函数名和参数 JSON 会拆成多个分片、
-   * 按 call.index 分批到达：这里按 index 找到（或新建）对应的 builder，
+   * 按 index 分批到达：这里按 index 找到（或新建）对应的 builder，
    * 把各字段逐段拼接，等 finish_reason 或流结束时由 reportToolCalls
    * 统一上报。
    */
-  private collectToolCalls(
-    toolCalls: ChatCompletionChunk.Choice.Delta.ToolCall[] | undefined,
+  private collectToolCall(
+    call: NormalizedStreamChunk['toolCall'],
     builders: Map<number, ToolCallBuilder>,
   ): void {
-    if (!toolCalls?.length) {
+    if (!call) {
       return;
     }
 
-    for (const call of toolCalls) {
-      const builder = builders.get(call.index) ?? {
-        id: '',
-        name: '',
-        arguments: '',
-      };
+    const builder = builders.get(call.index) ?? {
+      id: '',
+      name: '',
+      arguments: '',
+    };
 
-      if (call.id) {
-        builder.id = call.id;
-      }
-      if (call.function?.name) {
-        builder.name = call.function.name;
-      }
-      if (call.function?.arguments) {
-        builder.arguments += call.function.arguments;
-      }
-
-      builders.set(call.index, builder);
+    if (call.id) {
+      builder.id = call.id;
     }
+    if (call.name) {
+      builder.name = call.name;
+    }
+    if (call.argumentsDelta) {
+      builder.arguments += call.argumentsDelta;
+    }
+
+    builders.set(call.index, builder);
   }
 
   /**
