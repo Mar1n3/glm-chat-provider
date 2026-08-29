@@ -2,7 +2,7 @@
   "name": "glm-chat-provider",
   "displayName": "GLM Chat Provider",
   "description": "Z.AI GLM models as VS Code Language Model Chat Provider",
-  "version": "0.8.7",
+  "version": "0.8.8",
   "publisher": "DenizhanDaklr",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -119,35 +119,6 @@
           "description": "Deprecated. Use 'apiProvider' instead. Still honored when apiProvider is not customized: 'auto' probes both platforms and uses the one that recognizes your API key.",
           "scope": "application"
         },
-        "glm-chat-provider.defaultThinkingMode": {
-          "type": "string",
-          "default": "auto",
-          "enum": [
-            "auto",
-            "enabled",
-            "disabled",
-            "low",
-            "high",
-            "max"
-          ],
-          "enumDescriptions": [
-            "Let the model decide when to think (default behavior)",
-            "Always enable thinking mode",
-            "Always disable thinking mode",
-            "Thinking enabled, low effort (GLM-5.3+)",
-            "Thinking enabled, high effort (GLM-5.2+)",
-            "Thinking enabled, max effort (GLM-5.2+)"
-          ],
-          "description": "Default thinking mode for GLM models that support it (GLM-4.5+)"
-        },
-        "glm-chat-provider.temperature": {
-          "type": "number",
-          "default": 0.7,
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Default temperature when 'Custom' is selected in model picker. Use 'GLM: Set Temperature' command for presets + custom.",
-          "scope": "application"
-        },
         "glm-chat-provider.showPlanUsage": {
           "type": "boolean",
           "default": true,
@@ -167,22 +138,6 @@
       {
         "command": "glm-chat-provider.manage",
         "title": "GLM: Manage Provider"
-      },
-      {
-        "command": "glm-chat-provider.setThinkingEffort",
-        "title": "GLM: Set Thinking Effort"
-      },
-      {
-        "command": "glm-chat-provider.setTemperature",
-        "title": "GLM: Set Temperature"
-      },
-      {
-        "command": "glm-chat-provider.refreshUsage",
-        "title": "GLM: Refresh Plan Usage"
-      },
-      {
-        "command": "glm-chat-provider.usageDiagnostics",
-        "title": "GLM: Show Usage Diagnostics"
       }
     ]
   },

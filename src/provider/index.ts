@@ -304,16 +304,12 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
 
     if (alwaysOnWithEffort) {
       // GLM-5.3 系列：思维链强制开启且不可关闭，只能控制
-      // reasoning_effort（low/high/max）。
-      const configuredMode =
+      // reasoning_effort（low/high/max）。档位只来自输入框旁的
+      // 模型配置（configurationSchema），未选择时沿用 API 默认 max。
+      const mode =
         options?.modelConfiguration?.thinkingMode ??
         options?.configuration?.thinkingMode;
 
-      const globalConfig = vscode.workspace
-        .getConfiguration('glm-chat-provider')
-        .get<string>('defaultThinkingMode', 'auto');
-
-      const mode = configuredMode ?? globalConfig;
       if (mode === 'low') {
         return {thinking: {type: 'enabled'}, reasoningEffort: 'low'};
       }
@@ -355,29 +351,8 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       }
     }
 
-    const config = vscode.workspace
-      .getConfiguration('glm-chat-provider')
-      .get<string>('defaultThinkingMode', 'auto');
-
-    if (hasEffort) {
-      if (config === 'high') {
-        return {thinking: {type: 'enabled'}, reasoningEffort: 'high'};
-      }
-      if (config === 'max') {
-        return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
-      }
-      if (config === 'disabled') {
-        return {thinking: {type: 'disabled'}};
-      }
-    } else {
-      if (config === 'enabled') {
-        return {thinking: {type: 'enabled'}};
-      }
-      if (config === 'disabled' && canDisable) {
-        return {thinking: {type: 'disabled'}};
-      }
-    }
-
+    // 全局 defaultThinkingMode 设置已移除；未在模型配置中选择时
+    // 不发送 thinking 字段，沿用服务端默认行为。
     return {};
   }
 

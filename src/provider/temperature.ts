@@ -1,4 +1,3 @@
-import * as vscode from 'vscode';
 import {
   TEMPERATURE_PRESET_VALUES,
   type ModelConfigurationOptions,
@@ -7,9 +6,8 @@ import {
 
 /**
  * 把任意来源的温度值归一化为 0~1 之间的数字。
- * 支持四种输入：
+ * 支持三种输入：
  * - 数字：直接钳位到 [0, 1]；
- * - 'custom'：读取设置 glm-chat-provider.temperature 的自定义值并钳位；
  * - 预设名（balanced/precise/creative/max 等）：查 TEMPERATURE_PRESET_VALUES 表；
  * - 数字字符串：parseFloat 解析后钳位到 [0, 1]。
  * 其余输入返回 undefined，表示本次请求不带温度参数。
@@ -20,16 +18,6 @@ export function normalizeTemperatureValue(value: unknown): number | undefined {
   }
   // 非数字也非字符串的值无法归一化。
   if (typeof value !== 'string') return undefined;
-
-  // 'custom' 预设：实际温度取自全局设置里的 temperature 字段。
-  if (value === 'custom') {
-    const custom = vscode.workspace
-      .getConfiguration('glm-chat-provider')
-      .get<number>('temperature');
-    if (custom !== undefined && !Number.isNaN(custom))
-      return Math.max(0, Math.min(1, custom));
-    return undefined;
-  }
 
   // 先按预设名查表（预设值本身已在合法范围内，无需再钳位）。
   const preset = value as TemperaturePreset;

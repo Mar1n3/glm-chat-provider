@@ -1,7 +1,8 @@
 /**
  * GLM（Z.AI / 智谱）聊天模型提供方扩展的入口模块。
- * 负责注册语言模型提供方、管理 API Key、渲染套餐用量状态栏，
- * 并提供连通性测试、思维档位与温度设置、用量诊断等管理命令。
+ * 负责注册语言模型提供方、管理 API Key、渲染套餐用量状态栏。
+ * thinkingMode 与 temperature 通过聊天输入框旁模型配置（configurationSchema）
+ * 按模型单独设置，不再提供全局命令。
  */
 import * as vscode from 'vscode';
 import {match} from 'ts-pattern';
@@ -30,149 +31,6 @@ function getApiRegionSetting(): string {
       .getConfiguration('glm-chat-provider')
       .get<string>('apiRegion', 'auto') ?? 'auto'
   );
-}
-
-/**
- * 命令处理：弹出 QuickPick 让用户选择思维（thinking）档位，
- * 并把结果写入全局配置 defaultThinkingMode，供请求构造时使用。
- */
-async function setThinkingEffort(): Promise<void> {
-  const config = vscode.workspace.getConfiguration('glm-chat-provider');
-  const current = config.get<string>('defaultThinkingMode', 'auto');
-
-  // 档位选项：auto 由模型自行决定；low 为低思考力度（GLM-5.3+），
-  // high / max 为更高思考力度（GLM-5.2+）；disabled 表示始终关闭思考。
-  const items = [
-    {
-      label: 'Auto',
-      description: 'Let the model decide when to think',
-      value: 'auto',
-      picked: current === 'auto',
-    },
-    {
-      label: 'Enabled',
-      description: 'Always enable thinking mode',
-      value: 'enabled',
-      picked: current === 'enabled',
-    },
-    {
-      label: 'Low',
-      description: 'Thinking enabled, low effort (GLM-5.3+)',
-      value: 'low',
-      picked: current === 'low',
-    },
-    {
-      label: 'High',
-      description: 'Thinking enabled, high effort (GLM-5.2+)',
-      value: 'high',
-      picked: current === 'high',
-    },
-    {
-      label: 'Max',
-      description: 'Thinking enabled, max effort (GLM-5.2+)',
-      value: 'max',
-      picked: current === 'max',
-    },
-    {
-      label: 'Disabled',
-      description: 'Always disable thinking mode',
-      value: 'disabled',
-      picked: current === 'disabled',
-    },
-  ];
-
-  const choice = await vscode.window.showQuickPick(items, {
-    placeHolder: 'Select thinking effort for GLM models',
-  });
-
-  if (!choice) {
-    return;
-  }
-
-  // 第三个参数 true：写入全局（用户级）配置，对所有窗口生效。
-  await config.update('defaultThinkingMode', choice.value, true);
-  vscode.window.showInformationMessage(
-    `GLM thinking effort set to ${choice.label}`,
-  );
-}
-
-/**
- * 命令处理：弹出 QuickPick 让用户选择温度预设（均衡/精确/创意/最大），
- * 或选择 Custom 手动输入 0.0–1.0 的值，结果写入全局配置 temperature。
- */
-async function setTemperature(): Promise<void> {
-  // 各预设的取值与适用场景。
-  const presets = [
-    {
-      key: 'balanced',
-      label: 'Balanced',
-      value: 0.7,
-      description: 'Default for most tasks',
-    },
-    {
-      key: 'precise',
-      label: 'Precise',
-      value: 0.2,
-      description: 'Coding / Math (deterministic)',
-    },
-    {
-      key: 'creative',
-      label: 'Creative',
-      value: 0.9,
-      description: 'Writing / Brainstorming',
-    },
-    {
-      key: 'max',
-      label: 'Max',
-      value: 1.0,
-      description: 'Maximum (most random)',
-    },
-  ];
-
-  // 组合预设与 Custom 项；Custom 的 value 为 undefined，表示走输入框流程。
-  const selection = await vscode.window.showQuickPick(
-    [
-      ...presets.map(p => ({
-        label: p.label,
-        description: `${p.value} — ${p.description}`,
-        value: p.value,
-      })),
-      {
-        label: 'Custom',
-        description: 'Enter your own value (0.0 - 1.0)',
-        value: undefined,
-      },
-    ],
-    {placeHolder: 'Select temperature for GLM models'},
-  );
-
-  if (!selection) return;
-
-  let value: number;
-  // 选择 Custom 时改用输入框读取自定义数值。
-  if (selection.value === undefined) {
-    const input = await vscode.window.showInputBox({
-      prompt: 'Enter temperature value (0.0 - 1.0)',
-      // 输入校验：必须是 0.0–1.0 之间的数字，否则拒绝提交。
-      validateInput: text => {
-        const parsed = Number.parseFloat(text);
-        if (Number.isNaN(parsed) || parsed < 0 || parsed > 1) {
-          return 'Value must be a number between 0.0 and 1.0';
-        }
-        return undefined;
-      },
-    });
-    if (!input) return;
-    value = Number.parseFloat(input);
-  } else {
-    value = selection.value;
-  }
-
-  // 写入全局（用户级）配置。
-  await vscode.workspace
-    .getConfiguration('glm-chat-provider')
-    .update('temperature', value, true);
-  vscode.window.showInformationMessage(`GLM temperature set to ${value}`);
 }
 
 /**
@@ -551,19 +409,6 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       await action();
     }),
-    // 命令：选择思维档位 / 温度预设（见顶部同名函数）。
-    vscode.commands.registerCommand(
-      'glm-chat-provider.setThinkingEffort',
-      async () => {
-        await setThinkingEffort();
-      },
-    ),
-    vscode.commands.registerCommand(
-      'glm-chat-provider.setTemperature',
-      async () => {
-        await setTemperature();
-      },
-    ),
   );
 }
 
