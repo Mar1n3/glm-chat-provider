@@ -16,5 +16,6 @@ node_modules/**
 out/**
 !out/extension.js
 bundle.js
+bundle.mjs
 package-lock.json
 

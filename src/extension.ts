@@ -264,6 +264,109 @@ async function setTemperature(): Promise<void> {
 }
 
 /**
+ * 命令处理：弹出 QuickPick 让用户切换 API 服务商（智谱/Z.AI/自定义）。
+ * 选择自定义时依次引导输入 base 地址与接口协议，结果写入全局配置。
+ */
+async function switchProvider(): Promise<void> {
+  const config = vscode.workspace.getConfiguration('glm-chat-provider');
+  const current = config.get<string>('apiProvider', 'zhipu');
+
+  const items = [
+    {
+      label: 'ZHIPU (China)',
+      description: 'open.bigmodel.cn — Coding Plan usage supported',
+      value: 'zhipu',
+      picked: current === 'zhipu',
+    },
+    {
+      label: 'Z.AI (Global)',
+      description: 'api.z.ai — Coding Plan usage supported',
+      value: 'zai',
+      picked: current === 'zai',
+    },
+    {
+      label: 'Custom',
+      description: 'Your intranet server or a third-party GLM gateway',
+      value: 'custom',
+      picked: current === 'custom',
+    },
+  ];
+
+  const choice = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Select API provider',
+  });
+  if (!choice) {
+    return;
+  }
+
+  await config.update('apiProvider', choice.value, true);
+
+  if (choice.value !== 'custom') {
+    vscode.window.showInformationMessage(
+      `GLM API provider set to ${choice.label}`,
+    );
+    return;
+  }
+
+  // 选择自定义：引导输入 base 地址（原样使用，不拼路径）。
+  const existingBase = config.get<string>('customBaseUrl', '');
+  const baseUrl = await vscode.window.showInputBox({
+    prompt: 'Enter the custom provider base URL (used as-is, no path appended)',
+    placeHolder: 'https://gw.corp.local/glm/v4',
+    value: existingBase,
+    ignoreFocusOut: true,
+    validateInput: text =>
+      text && text.trim().length > 0 ? undefined : 'Base URL cannot be empty',
+  });
+  if (!baseUrl) {
+    return;
+  }
+  await config.update('customBaseUrl', baseUrl.trim(), true);
+
+  // 接着选择接口协议，默认 chat-completions。
+  const protocolItems = [
+    {
+      label: 'Chat Completions',
+      description: 'OpenAI compatible (most gateways)',
+      value: 'chat-completions',
+    },
+    {
+      label: 'Messages',
+      description: 'Anthropic Messages compatible',
+      value: 'messages',
+    },
+    {
+      label: 'Responses',
+      description: 'OpenAI Responses compatible',
+      value: 'responses',
+    },
+  ];
+  // 预选当前已配置的协议（若有）。
+  const existingProtocol = config.get<string>(
+    'customApiProtocol',
+    'chat-completions',
+  );
+  const protocol = await vscode.window.showQuickPick(
+    protocolItems.map(item => ({
+      ...item,
+      picked: item.value === existingProtocol,
+    })),
+    {
+      placeHolder: 'Select wire protocol',
+      canPickMany: false,
+    },
+  );
+  if (!protocol) {
+    return;
+  }
+  await config.update('customApiProtocol', protocol.value, true);
+
+  vscode.window.showInformationMessage(
+    `GLM API provider set to Custom (${baseUrl.trim()}, ${protocol.value})`,
+  );
+}
+
+/**
  * 扩展激活入口：创建鉴权管理器与聊天提供方，维护用量状态并渲染状态栏，
  * 注册全部命令与配置变更监听，并按配置间隔定时刷新套餐用量。
  */
@@ -421,7 +524,19 @@ export function activate(context: vscode.ExtensionContext): void {
   const provider = new GlmChatProvider(authManager, onUsage);
 
   // 管理菜单的动作表：菜单项文案 → 对应的异步操作。
+  // 首项动态带上当前服务商名，便于直接看到正在使用哪个平台。
+  const activeProviderConfig = vscode.workspace
+    .getConfiguration('glm-chat-provider')
+    .get<string>('apiProvider', 'zhipu');
+  const currentProviderLabel =
+    activeProviderConfig === 'custom'
+      ? 'Custom'
+      : activeProviderConfig === 'zai'
+        ? 'Z.AI'
+        : 'ZHIPU';
   const manageActions: Record<string, () => Promise<void>> = {
+    [`Switch API Provider (current: ${currentProviderLabel})`]: () =>
+      switchProvider(),
     'Set API Key': async () => {
       await setApiKey(authManager, provider);
       await refreshUsage();
