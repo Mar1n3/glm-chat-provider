@@ -2,7 +2,7 @@
   "name": "glm-chat-provider",
   "displayName": "GLM Chat Provider",
   "description": "Z.AI GLM models as VS Code Language Model Chat Provider",
-  "version": "0.8.8",
+  "version": "0.8.10",
   "publisher": "DenizhanDaklr",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -136,8 +136,8 @@
     },
     "commands": [
       {
-        "command": "glm-chat-provider.manage",
-        "title": "GLM: Manage Provider"
+        "command": "glm-chat-provider.setApiKey",
+        "title": "GLM: Set or Update Provider and API Key"
       }
     ]
   },
