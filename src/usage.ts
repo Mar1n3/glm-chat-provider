@@ -637,14 +637,14 @@ export function buildUsageTooltip(
       minute: '2-digit',
     });
     markdown.appendMarkdown(
-      `<span style="opacity:.65;">Updated ${time} · ${requestCount} requests · Click to refresh</span>`,
+      `<span style="opacity:.65;">Updated ${time} · ${requestCount} requests · Click to manage provider</span>`,
     );
   } else if (error) {
     markdown.appendMarkdown(`⚠️ ${error}\n\n`);
-    markdown.appendMarkdown('Click to retry');
+    markdown.appendMarkdown('Click to manage provider');
   } else {
     markdown.appendMarkdown('Loading usage…\n\n');
-    markdown.appendMarkdown('Click to refresh');
+    markdown.appendMarkdown('Click to manage provider');
   }
   return markdown;
 }

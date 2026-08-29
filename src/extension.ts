@@ -294,12 +294,13 @@ export function activate(context: vscode.ExtensionContext): void {
   let usageInFlight = false;
   let lastUsageAttempt = 0;
 
-  // 右下角状态栏项（优先级 100）：展示用量摘要，点击触发刷新命令。
+  // 右下角状态栏项（优先级 100）：展示用量摘要，点击打开管理菜单
+  // （菜单里的 Switch Provider 项可手动触发一次用量刷新）。
   const usageStatusBarItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
     100,
   );
-  usageStatusBarItem.command = 'glm-chat-provider.refreshUsage';
+  usageStatusBarItem.command = 'glm-chat-provider.manage';
 
   // 诊断输出通道：首次执行诊断命令时才创建，之后复用。
   let diagnosticsChannel: vscode.OutputChannel | undefined;
@@ -322,9 +323,10 @@ export function activate(context: vscode.ExtensionContext): void {
   // 按当前用量状态重绘状态栏：关闭套餐展示时只显示会话请求数；
   // 开启时显示 ZHIPU 图标，用量 ≥90% 黄色警告、≥100% 红色，
   // 无百分比/未拉到数据/出错时用图标加符号区分。
+  // 点击统一打开管理菜单（该命令已注册，不会出现 command not found）。
   const renderUsageStatusBar = (): void => {
     const {showPlanUsage} = getUsageSettings();
-    // 未开启套餐展示：仅显示请求数，点击改为打开管理菜单。
+    // 未开启套餐展示：仅显示请求数。
     if (!showPlanUsage) {
       usageStatusBarItem.text = `GLM: $(database) ${requestCount} req`;
       usageStatusBarItem.tooltip = [
@@ -336,7 +338,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    usageStatusBarItem.command = 'glm-chat-provider.refreshUsage';
+    usageStatusBarItem.command = 'glm-chat-provider.manage';
     // 主百分比取值顺序：5 小时窗口 > 月度窗口 > 首个套餐条目。
     const primary =
       planUsage?.fiveHour?.percentage ??
