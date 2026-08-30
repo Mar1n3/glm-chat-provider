@@ -1,30 +1,51 @@
 import * as vscode from 'vscode';
 
 /**
+ * 上报模式：运行时探测一次 LanguageModelThinkingPart 是否存在。
+ * - 存在（新版 VS Code 启用了该提案 API）：思考内容以 ThinkingPart
+ *   上报，聊天界面显示为可折叠的“思考过程”区块；
+ * - 不存在（如 1.116 稳定 API）：返回 undefined，调用方降级为
+ *   普通文本上报，保证思考内容始终可见。
+ */
+let thinkingPartSupported: boolean | undefined;
+
+/**
  * 创建一个 LanguageModelThinkingPart（思维链内容部件）。
- * 该类属于 VS Code 的提案 API（proposed API），旧版本运行时可能不存在，
- * 因此这里在运行时探测 vscode 上是否挂有该构造函数；不可用时返回
- * undefined，调用方应跳过思维内容的上报，不影响正文输出。
+ * 该类属于 VS Code 的提案 API（proposed API），稳定版本运行时可能
+ * 不存在，因此这里在运行时探测 vscode 上是否挂有该构造函数。
+ *
+ * @returns ThinkingPart 实例；运行时不支持该 API 时返回 undefined，
+ * 调用方应降级为普通文本上报（而不是丢弃思考内容）。
  */
 export function createThinkingPart(
   value: string,
 ): vscode.LanguageModelResponsePart | undefined {
-  // 运行时探测：把 vscode 断言成“可能带有 LanguageModelThinkingPart”的
-  // 类型后读取构造函数，避免在不支持的旧版本上直接访问导致报错。
+  // 运行时探测结果只算一次，后续调用直接复用。
+  thinkingPartSupported ??=
+    typeof (
+      vscode as typeof vscode & {
+        LanguageModelThinkingPart?: new (
+          value: string,
+          id?: string,
+          metadata?: {readonly [key: string]: unknown},
+        ) => vscode.LanguageModelResponsePart;
+      }
+    ).LanguageModelThinkingPart === 'function';
+
+  // 运行时不支持该提案 API：返回 undefined，由调用方降级为文本。
+  if (!thinkingPartSupported) {
+    return undefined;
+  }
+
   const ThinkingPartCtor = (
     vscode as typeof vscode & {
-      LanguageModelThinkingPart?: new (
+      LanguageModelThinkingPart: new (
         value: string,
         id?: string,
         metadata?: {readonly [key: string]: unknown},
       ) => vscode.LanguageModelResponsePart;
     }
   ).LanguageModelThinkingPart;
-
-  // 构造函数不存在说明当前 VS Code 版本不支持该提案 API，放弃思维上报。
-  if (typeof ThinkingPartCtor !== 'function') {
-    return undefined;
-  }
 
   return new ThinkingPartCtor(value);
 }

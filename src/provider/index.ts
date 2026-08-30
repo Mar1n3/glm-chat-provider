@@ -469,9 +469,10 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   }
 
   /**
-   * 上报思维链增量内容：包装成 LanguageModelThinkingPart 上报。
-   * LanguageModelThinkingPart 是提案 API，旧版本运行时不存在，
-   * createThinkingPart 内部会探测并优雅降级。
+   * 上报思维链增量内容。
+   * 优先包装成 LanguageModelThinkingPart（新版 VS Code 显示为可折叠的
+   * 思考区块）；运行时不存在该提案 API 时降级为普通文本上报——保证
+   * 思考过程在任何 VS Code 版本上都可见，而不是被静默丢弃。
    */
   private reportThinking(
     thinking: string,
@@ -480,6 +481,8 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     const thinkingPart = createThinkingPart(thinking);
     if (thinkingPart) {
       progress.report(thinkingPart);
+    } else {
+      progress.report(new vscode.LanguageModelTextPart(thinking));
     }
   }
 
