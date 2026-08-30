@@ -97,7 +97,7 @@ function prepareApiKeyForOpenAIClient(apiKey: string): string {
     const cp = ch.codePointAt(0) ?? 0;
     if (cp > 255) {
       throw new GlmApiError(
-        `API key must be plain ASCII. Invalid character at index ${utf16Index} (Unicode U+${cp.toString(16).toUpperCase()}). Re-copy the key from the Z.AI console without extra symbols.`,
+        `API key must be plain ASCII. Invalid character at index ${utf16Index} (Unicode U+${cp.toString(16).toUpperCase()}). Re-copy the key from your provider console without extra symbols.`,
         400,
       );
     }

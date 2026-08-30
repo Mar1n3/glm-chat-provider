@@ -29,7 +29,7 @@ export class AuthManager {
    */
   async promptForApiKey(): Promise<string | undefined> {
     const input = await vscode.window.showInputBox({
-      prompt: 'Enter your Z.ai API Key',
+      prompt: 'Enter your GLM API Key',
       password: true,
       placeHolder: 'sk-...',
       ignoreFocusOut: true,

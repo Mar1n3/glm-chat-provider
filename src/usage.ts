@@ -627,7 +627,7 @@ export function buildUsageTooltip(
       markdown.appendMarkdown(
         'No active Coding Plan quota found for this API key.\n\n' +
           regionNote +
-          '\n\nMake sure this key is a **GLM Coding Plan** key (from a Coding Plan subscription on z.ai or open.bigmodel.cn). ' +
+          '\n\nMake sure this key is a **GLM Coding Plan** key (from a Coding Plan subscription on ZHIPU / Z.AI). ' +
           'Pay-as-you-go API keys have no plan quota.\n\n',
       );
     }
