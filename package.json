@@ -2,7 +2,7 @@
   "name": "glm-chat-provider",
   "displayName": "GLM Chat Provider",
   "description": "Z.AI GLM models as VS Code Language Model Chat Provider",
-  "version": "0.8.10",
+  "version": "0.8.11",
   "publisher": "DenizhanDaklr",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -78,7 +78,7 @@
             "Z.AI international — api.z.ai (Coding Plan usage supported)",
             "Custom provider — your own intranet server or a third-party GLM gateway (usage not available)"
           ],
-          "description": "API provider to send chat requests to.",
+          "description": "API provider to send chat requests to. API key and provider are configured in the chat model settings (model picker → Configure Models → Z.AI GLM), not here.",
           "scope": "application"
         },
         "glm-chat-provider.customBaseUrl": {
@@ -133,13 +133,7 @@
           "scope": "application"
         }
       }
-    },
-    "commands": [
-      {
-        "command": "glm-chat-provider.setApiKey",
-        "title": "GLM: Set or Update Provider and API Key"
-      }
-    ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run bundle",

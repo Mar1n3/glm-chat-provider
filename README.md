@@ -93,18 +93,16 @@ Per-model thinking control (also under `GLM: Set Thinking Effort`):
 `GLM: Set Temperature` or the per-chat model picker: Balanced (0.7),
 Precise (0.2), Creative (0.9), Max (1.0), or a custom value.
 
-## Commands
+## Configuration
 
-- `GLM: Manage Provider` — Open provider management options: switch API
-  provider, **Set Provider** / **Set Provider and API Key** (label depends
-  on whether the key is already stored in VS Code's model settings), and
-  **Clear Provider** to drop the extension-stored key
-- `GLM: Set Thinking Effort` — Choose the global default thinking mode
-- `GLM: Set Temperature` — Choose a temperature preset or custom value
+All settings live in the `@ext:DenizhanDaklr.glm-chat-provider` settings
+section (no GLM commands in the Command Palette):
 
-Thinking mode and temperature can also be adjusted per-chat from the model
-picker configuration (the gear entry next to the model name in the chat
-input box).
+- **API provider / protocol / base URL** — set directly in settings
+- **API key** — stored securely (masked, encrypted) in the chat model
+  settings: model picker → ⚙️ / *Configure Models* → Z.AI GLM
+- **Thinking mode & temperature** — per-model, via the gear entry next to
+  the model name in the chat input box
 
 ## Settings
 
@@ -114,18 +112,19 @@ input box).
 | `glm-chat-provider.customBaseUrl` | — | Base URL for the custom provider (used as-is) |
 | `glm-chat-provider.customApiProtocol` | `chat-completions` | Wire protocol for the custom provider |
 | `glm-chat-provider.apiRegion` | `auto` | Official platform selection (deprecated; `apiProvider` takes precedence) |
-| `glm-chat-provider.defaultThinkingMode` | `auto` | Global thinking mode default |
-| `glm-chat-provider.temperature` | `0.7` | Temperature for the "Custom" preset |
 | `glm-chat-provider.showPlanUsage` | `true` | Show plan usage in the status bar (official platforms only) |
 | `glm-chat-provider.usageRefreshIntervalSeconds` | `300` | Usage refresh period (0 disables) |
 
 ## How to Use
 
-1. Open the Command Palette and run `GLM: Set API Key` to configure your API
-   key (from a GLM Coding Plan subscription on z.ai or open.bigmodel.cn)
-2. Use the provider from VS Code's Language Model Chat UI and select
+1. Install this extension, then open the chat model picker → *Configure
+   Models* → Z.AI GLM and enter your API key (from a GLM Coding Plan
+   subscription on z.ai or open.bigmodel.cn). It is stored encrypted and
+   displayed masked
+2. Optionally adjust provider/protocol in the `@ext` settings section
+3. Use the provider from VS Code's Language Model Chat UI and select
    **Z.AI GLM**
-3. Watch your plan quota in the status bar
+4. Watch your plan quota in the status bar (click to refresh)
 
 ---
 
