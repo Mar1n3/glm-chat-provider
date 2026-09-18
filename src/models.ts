@@ -262,7 +262,7 @@ export interface GlmModelDefinition {
 }
 
 /**
- * 全部 16 个 GLM 模型的清单（按发布时间从新到旧排列），供注册语言模型、
+ * 全部 17 个 GLM 模型的清单（按发布时间从新到旧排列），供注册语言模型、
  * 生成模型选择器条目，以及按模型 ID 查找元数据（解析推理参数）时使用。
  */
 export const GLM_MODEL_DEFINITIONS: readonly GlmModelDefinition[] = [
@@ -282,6 +282,17 @@ export const GLM_MODEL_DEFINITIONS: readonly GlmModelDefinition[] = [
     name: 'GLM-5.3-Flash',
     family: 'glm',
     version: '5.3-flash',
+    detail: 'Z.AI',
+    maxInputTokens: 1000000,
+    maxOutputTokens: 131072,
+    capabilities: {imageInput: true, toolCalling: true, thinking: true},
+    thinkingSupport: 'always-on-effort',
+  },
+  {
+    id: 'glm-5.3-flashx',
+    name: 'GLM-5.3-FlashX',
+    family: 'glm',
+    version: '5.3-flashx',
     detail: 'Z.AI',
     maxInputTokens: 1000000,
     maxOutputTokens: 131072,

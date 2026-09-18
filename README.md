@@ -16,6 +16,7 @@ pinned in settings.
 |---|---|---|---|---|
 | GLM-5.3 | 1M | 131K | Always on (low/high/max effort) | Yes |
 | GLM-5.3-Flash | 1M | 131K | Always on (low/high/max effort) | Yes |
+| GLM-5.3-FlashX | 1M | 131K | Always on (low/high/max effort) | Yes |
 | GLM-5.2 | 1M | 131K | Auto / high / max / off | Yes |
 | GLM-5.1 | 205K | 131K | Auto on/off | Yes |
 | GLM-5 | 205K | 131K | Auto on/off | Yes |
