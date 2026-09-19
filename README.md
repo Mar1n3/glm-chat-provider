@@ -10,24 +10,24 @@ Supports both platforms of the GLM Coding Plan:
 The platform is detected automatically (`auto`, default), and can also be
 pinned in settings.
 
-### Text Models
+### General-purpose Models
 
-| Model | Context | Output | Thinking | Tool Calling |
-|---|---|---|---|---|
-| GLM-5.3 | 1M | 131K | Always on (low/high/max effort) | Yes |
-| GLM-5.3-Flash | 1M | 131K | Always on (low/high/max effort) | Yes |
-| GLM-5.3-FlashX | 1M | 131K | Always on (low/high/max effort) | Yes |
-| GLM-5.2 | 1M | 131K | Auto / high / max / off | Yes |
-| GLM-5.1 | 205K | 131K | Auto on/off | Yes |
-| GLM-5 | 205K | 131K | Auto on/off | Yes |
-| GLM-5-Turbo | 205K | 131K | Auto on/off | Yes |
-| GLM-4.7 | 205K | 131K | Auto on/off | Yes |
-| GLM-4.7 Flash | 205K | 131K | Auto on/off | Yes |
-| GLM-4.7 FlashX | 205K | 131K | Auto on/off | Yes |
-| GLM-4.6 | 205K | 131K | Auto on/off | Yes |
-| GLM-4.5 | 131K | 98K | Always on | Yes |
-| GLM-4.5 Flash | 131K | 98K | Always on | Yes |
-| GLM-4.5 Air | 131K | 98K | Always on | Yes |
+| Model | Context | Output | Thinking | Tool Calling  Image Input |
+|---|---|---|---|---|---|
+| GLM-5.3 | 1M | 131K | Always on (low/high/max effort) | Yes  No |
+| GLM-5.3-Flash | 1M | 131K | Always on (low/high/max effort) | Yes  Yes |
+| GLM-5.3-FlashX | 1M | 131K | Always on (low/high/max effort) | Yes  Yes |
+| GLM-5.2 | 1M | 131K | Auto / high / max / off | Yes  No |
+| GLM-5.1 | 205K | 131K | Auto on/off | Yes  No |
+| GLM-5 | 205K | 131K | Auto on/off | Yes  No |
+| GLM-5-Turbo | 205K | 131K | Auto on/off | Yes  No |
+| GLM-4.7 | 205K | 131K | Auto on/off | Yes  No |
+| GLM-4.7 Flash | 205K | 131K | Auto on/off | Yes  No |
+| GLM-4.7 FlashX | 205K | 131K | Auto on/off | Yes  No |
+| GLM-4.6 | 205K | 131K | Auto on/off | Yes  No |
+| GLM-4.5 | 131K | 98K | Always on | Yes  No |
+| GLM-4.5 Flash | 131K | 98K | Always on | Yes  No |
+| GLM-4.5 Air | 131K | 98K | Always on | Yes  No |
 
 ### Vision Models
 
@@ -80,13 +80,40 @@ Custom providers have no plan-quota monitor, so the status-bar usage indicator
 is hidden automatically. Chat-completions remains the protocol used for the
 official ZHIPU / Z.AI platforms.
 
+Custom adapters preserve text/image blocks and tool-call history. Images are
+serialized as Messages `image` blocks (base64 or URL) or Responses `input_image`
+blocks. Streaming and non-streaming requests use the same request adapter.
+
+| Protocol | Effort field | FlashX effort choices | Default |
+|---|---|---|---|
+| Chat Completions | `reasoning_effort` | low / high / max | max (server default) |
+| Messages | `output_config.effort` | low / high / max | max |
+| Responses | `reasoning.effort` | low / high | high |
+
+The picker refreshes when the configured protocol changes. Responses has no
+standard `max` effort value, so it is not offered; a saved `max` selection must
+be changed explicitly, rather than silently becoming `high` or `xhigh`.
+Messages maps enabled thinking to `thinking.type: adaptive`; the gateway must
+support adaptive thinking and `output_config.effort` for its GLM backend.
+Responses maps disabled thinking to `reasoning.effort: none`. Actual model
+availability, sampling parameters and effort support depend on the gateway;
+these wire adapters do not make an unsupported upstream model available.
+System instructions and Responses assistant history are text-only; images in
+those positions are rejected rather than discarded. Responses also rejects
+unsupported stop sequences.
+
+Protocol references: [Messages effort](https://platform.claude.com/docs/en/build-with-claude/effort),
+[adaptive thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#migrating-to-adaptive-thinking),
+and [Messages images](https://platform.claude.com/docs/en/build-with-claude/vision).
+Responses request shapes follow the installed OpenAI SDK definitions.
+
 ### Thinking modes
 
 Per-model thinking control (also under `GLM: Set Thinking Effort`):
 
 - **Auto** — let the model decide (GLM-4.7–5.2 series)
 - **High / Max effort** — reasoning intensity control (GLM-5.2/5.3)
-- **Low / High / Max** — always-on models with effort selection (GLM-5.3)
+- **Low / High / Max** — always-on models with effort selection (GLM-5.3 / GLM-5.3-Flash / GLM-5.3-FlashX)
 - **Enabled / Disabled** — simple on/off (GLM-4.5–5.1)
 
 ### Temperature presets
@@ -132,3 +159,16 @@ section (no GLM commands in the Command Palette):
 ## License
 
 MIT (c) Denizhan Dakilir
+
+## Development and packaging
+
+Run `npm ci`, `npm test`, then `npm run package`. Tests cover model registration,
+picker settings, all three protocol request bodies, multimodal/tool history,
+and streaming/non-streaming dispatch without a live API key.
+The VSIX packager is pinned in the lockfile. Packaging preserves the version in `package.json` and `package-lock.json`.
+Bump the version explicitly in a separate release change when needed.
+
+Before publishing 0.8.17, install the generated VSIX in VS Code 1.116 or newer
+and check FlashX selection, low/high/max effort, an image prompt and a tool call
+against an authorized account. Confirm model availability separately on each
+official platform. CI packages VSIX artifacts; it does not publish to Marketplace.

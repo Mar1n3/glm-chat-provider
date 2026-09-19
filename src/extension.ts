@@ -330,6 +330,14 @@ export function activate(context: vscode.ExtensionContext): void {
     // apiRegion 变化时立即强制刷新一次用量。
     vscode.workspace.onDidChangeConfiguration(event => {
       if (
+        event.affectsConfiguration('glm-chat-provider.apiProvider') ||
+        event.affectsConfiguration('glm-chat-provider.customApiProtocol') ||
+        event.affectsConfiguration('glm-chat-provider.customBaseUrl')
+      ) {
+        provider.fireLanguageModelChatInformationChange();
+        void refreshUsage();
+      }
+      if (
         event.affectsConfiguration('glm-chat-provider.showPlanUsage') ||
         event.affectsConfiguration(
           'glm-chat-provider.usageRefreshIntervalSeconds',

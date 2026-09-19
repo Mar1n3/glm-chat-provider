@@ -140,17 +140,19 @@
     "bundle": "node bundle.mjs",
     "compile": "tsc",
     "watch": "tsc -watch -p ./",
-    "package": "npm version patch --no-git-tag-version && npx @vscode/vsce package --no-dependencies",
+    "package": "vsce package --no-dependencies",
     "lint": "gts lint",
     "clean": "gts clean",
     "fix": "gts fix",
-    "prepare": "npm.cmd run compile",
-    "pretest": "npm.cmd run compile",
-    "posttest": "npm.cmd run lint"
+    "prepare": "npm run compile",
+    "pretest": "npm run compile",
+    "test": "node --test test/*.test.cjs",
+    "posttest": "npm run lint"
   },
   "devDependencies": {
     "@types/node": "^22.7.5",
     "@types/vscode": "1.116.0",
+    "@vscode/vsce": "4.0.0",
     "esbuild": "^0.28.1",
     "eslint": "9.39.2",
     "gts": "^7.0.0",

@@ -9,6 +9,8 @@
  */
 import type * as vscode from 'vscode';
 import OpenAI from 'openai';
+import {toAnthropicBody, toResponsesBody} from './protocol-adapters';
+import {parseApiProtocol} from './protocol';
 import {match} from 'ts-pattern';
 import {chatBaseUrl, type ApiProtocol, type GlmRegion} from './region';
 import type {
@@ -191,95 +193,6 @@ async function* parseSse(
 
 /* ==================== Anthropic Messages 协议适配 ==================== */
 
-/** 把统一消息列表转换为 Messages API 请求体（system 提到顶层）。 */
-function toAnthropicBody(
-  model: string,
-  messages: GlmMessage[],
-  options: ChatOptions | undefined,
-  stream: boolean,
-): Record<string, unknown> {
-  const systemParts: string[] = [];
-  const converted: Array<Record<string, unknown>> = [];
-  /** 上一条 assistant 消息里产生的 tool_use 块，紧随其 tool_result 回传。 */
-  let pendingToolUses: Array<Record<string, unknown>> = [];
-
-  const flushToolUses = () => {
-    if (pendingToolUses.length > 0) {
-      converted.push({role: 'assistant', content: pendingToolUses});
-      pendingToolUses = [];
-    }
-  };
-
-  for (const message of messages) {
-    const text = typeof message.content === 'string' ? message.content : '';
-    if (message.role === 'system') {
-      systemParts.push(text);
-      continue;
-    }
-    if (message.role === 'tool') {
-      // 工具结果：作为 user 消息里的 tool_result 块回传。
-      converted.push({
-        role: 'user',
-        content: [
-          {
-            type: 'tool_result',
-            tool_use_id: message.tool_call_id ?? '',
-            content: text,
-          },
-        ],
-      });
-      continue;
-    }
-    if (message.role === 'assistant' && message.tool_calls?.length) {
-      // assistant 的工具调用：转成 tool_use 块（input 需要是对象）。
-      const blocks = message.tool_calls.map(call => {
-        let input: unknown = {};
-        try {
-          input = JSON.parse(call.function.arguments || '{}');
-        } catch {
-          input = {};
-        }
-        return {type: 'tool_use', id: call.id, name: call.function.name, input};
-      });
-      pendingToolUses = blocks;
-      continue;
-    }
-    flushToolUses();
-    converted.push({
-      role: message.role === 'assistant' ? 'assistant' : 'user',
-      content: text,
-    });
-  }
-  flushToolUses();
-
-  const body: Record<string, unknown> = {
-    model,
-    max_tokens: options?.maxTokens ?? 8192,
-    messages: converted,
-    stream,
-  };
-  if (systemParts.length > 0) {
-    body.system = systemParts.join('\n\n');
-  }
-  if (options?.temperature !== undefined) {
-    body.temperature = options.temperature;
-  }
-  if (options?.stop?.length) {
-    body.stop_sequences = options.stop;
-  }
-  if (options?.thinking) {
-    body.thinking = options.thinking;
-  }
-  if (options?.tools?.length) {
-    body.tools = options.tools.map(tool => ({
-      name: tool.function.name,
-      description: tool.function.description,
-      input_schema: tool.function.parameters,
-    }));
-  }
-  return body;
-}
-
 /**
  * 把 Messages API 的流式事件归一化。有状态的转换：需要跨事件维护
  * 正在生成的块类型（text/thinking/tool_use）。
@@ -361,75 +274,6 @@ class AnthropicStreamNormalizer {
 
 /* ==================== OpenAI Responses 协议适配 ==================== */
 
-/** 把统一消息列表转换为 Responses API 的 input items。 */
-function toResponsesBody(
-  model: string,
-  messages: GlmMessage[],
-  options: ChatOptions | undefined,
-  stream: boolean,
-): Record<string, unknown> {
-  const instructions: string[] = [];
-  const input: Array<Record<string, unknown>> = [];
-
-  for (const message of messages) {
-    const text = typeof message.content === 'string' ? message.content : '';
-    if (message.role === 'system') {
-      instructions.push(text);
-      continue;
-    }
-    if (message.role === 'tool') {
-      input.push({
-        type: 'function_call_output',
-        call_id: message.tool_call_id ?? '',
-        output: text,
-      });
-      continue;
-    }
-    if (message.role === 'assistant' && message.tool_calls?.length) {
-      if (text) {
-        input.push({type: 'message', role: 'assistant', content: text});
-      }
-      for (const call of message.tool_calls) {
-        input.push({
-          type: 'function_call',
-          call_id: call.id,
-          name: call.function.name,
-          arguments: call.function.arguments,
-        });
-      }
-      continue;
-    }
-    input.push({
-      type: 'message',
-      role: message.role === 'assistant' ? 'assistant' : 'user',
-      content: text,
-    });
-  }
-
-  const body: Record<string, unknown> = {model, input, stream};
-  if (instructions.length > 0) {
-    body.instructions = instructions.join('\n\n');
-  }
-  if (options?.maxTokens !== undefined) {
-    body.max_output_tokens = options.maxTokens;
-  }
-  if (options?.temperature !== undefined) {
-    body.temperature = options.temperature;
-  }
-  if (options?.stop?.length) {
-    // Responses API 无 stop 数组等价物；忽略。
-  }
-  if (options?.tools?.length) {
-    body.tools = options.tools.map(tool => ({
-      type: 'function',
-      name: tool.function.name,
-      description: tool.function.description,
-      parameters: tool.function.parameters,
-    }));
-  }
-  return body;
-}
-
 /** Responses API 流式事件的归一化（同样按 index 聚合工具调用）。 */
 /* eslint-disable @typescript-eslint/no-explicit-any -- 事件负载同上 */
 class ResponsesStreamNormalizer {
@@ -504,7 +348,7 @@ class ResponsesStreamNormalizer {
 export class GlmApiClient {
   private readonly client: OpenAI;
   /** 自定义服务商的接口协议；官方平台固定为 'chat-completions'。 */
-  private readonly protocol: ApiProtocol;
+  readonly protocol: ApiProtocol;
   /** 自定义服务商的 base 地址；官方平台为 undefined。 */
   private readonly customBaseUrl?: string;
   private readonly apiKey: string;
@@ -520,7 +364,7 @@ export class GlmApiClient {
     custom?: {baseUrl: string; protocol: ApiProtocol},
   ) {
     this.apiKey = prepareApiKeyForOpenAIClient(apiKey);
-    this.protocol = custom?.protocol ?? 'chat-completions';
+    this.protocol = parseApiProtocol(custom?.protocol);
     this.customBaseUrl = custom?.baseUrl;
     this.client = new OpenAI({
       apiKey: this.apiKey,
@@ -867,10 +711,32 @@ export class GlmApiClient {
     options?: ChatOptions,
   ): Promise<void> {
     try {
-      await this.client.chat.completions.create(
-        this.buildNonStreamingParams(model, messages, options),
+      if (this.protocol === 'chat-completions') {
+        await this.client.chat.completions.create(
+          this.buildNonStreamingParams(model, messages, options),
+        );
+        return;
+      }
+      const {body, headers} = this.buildCustomRequest(
+        model,
+        messages,
+        options,
+        false,
       );
+      const response = await fetch(this.customRequestUrl(), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', ...headers},
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        throw new GlmApiError(
+          `Custom provider error: HTTP ${response.status}`,
+          response.status,
+        );
+      }
+      await response.arrayBuffer();
     } catch (error) {
+      if (error instanceof GlmApiError) throw error;
       throw this.toGlmApiError(error);
     }
   }

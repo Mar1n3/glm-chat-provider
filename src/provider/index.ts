@@ -23,6 +23,7 @@ import {
   type ToolCallBuilder,
 } from './convert';
 import {getConfiguredTemperature} from './temperature';
+import {parseApiProtocol, PROTOCOL_CAPABILITIES} from '../protocol';
 
 /**
  * 在 VS Code 模型信息上扩展的内部类型：额外挂一个 __glmApiKey 字段，
@@ -51,7 +52,10 @@ type PrepareLanguageModelChatInfoOptions =
  * LanguageModelChatInformation（带类型字段的 ModelPickerChatInformation）。
  * 支持思维链的模型会附加 configurationSchema，供选择器展示 thinking 配置。
  */
-function toChatInfo(m: GlmModelDefinition): ModelPickerChatInformation {
+function toChatInfo(
+  m: GlmModelDefinition,
+  protocol: ApiProtocol,
+): ModelPickerChatInformation {
   return {
     id: m.id,
     name: m.name,
@@ -67,18 +71,15 @@ function toChatInfo(m: GlmModelDefinition): ModelPickerChatInformation {
       imageInput: m.capabilities.imageInput,
     },
     ...(m.capabilities.thinking
-      ? {configurationSchema: getModelConfigurationSchema(m.thinkingSupport)}
+      ? {
+          configurationSchema: getModelConfigurationSchema(
+            m.thinkingSupport,
+            protocol,
+          ),
+        }
       : {}),
   };
 }
-
-/**
- * 预先把全部 GLM 模型定义转换好的模型信息列表（不含 apiKey 的公共部分），
- * 供每次 provideLanguageModelChatInformation 复用，避免重复转换。
- */
-const TYPED_MODELS: ModelPickerChatInformation[] = GLM_MODEL_DEFINITIONS.map(
-  m => toChatInfo(m),
-);
 
 /**
  * 用量回调类型：当一次请求拿到 token 用量时，以 OpenAI 形状的字段
@@ -174,12 +175,17 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     return this.modelsWithApiKey(vscodeApiKey!);
   }
 
-  /** 为每个预转换模型克隆一份并挂上 __glmApiKey，形成最终上报的模型列表。 */
+  /** 根据当前协议生成模型配置，并绑定 __glmApiKey。 */
   private modelsWithApiKey(
     apiKey: string,
   ): vscode.LanguageModelChatInformation[] {
-    return TYPED_MODELS.map(model => ({
-      ...model,
+    const config = vscode.workspace.getConfiguration('glm-chat-provider');
+    const protocol =
+      config.get<string>('apiProvider') === 'custom'
+        ? parseApiProtocol(config.get<string>('customApiProtocol'))
+        : 'chat-completions';
+    return GLM_MODEL_DEFINITIONS.map(definition => ({
+      ...toChatInfo(definition, protocol),
       __glmApiKey: apiKey,
     })) as unknown as vscode.LanguageModelChatInformation[];
   }
@@ -228,7 +234,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
         // 自定义服务商：单一端点，无区域探测、无用量功能。
         const client = new GlmApiClient(apiKey, 'china', {
           baseUrl: resolved.customBaseUrl!,
-          protocol: customProtocol as ApiProtocol,
+          protocol: parseApiProtocol(customProtocol),
         });
         await this.streamResponse(
           client,
@@ -294,6 +300,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   private resolveThinking(
     modelId: string,
     options?: ModelConfigurationOptions,
+    protocol: ApiProtocol = 'chat-completions',
   ): {thinking?: Record<string, unknown>; reasoningEffort?: string} {
     const def = GLM_MODEL_DEFINITIONS.find(m => m.id === modelId);
     const canDisable =
@@ -319,8 +326,13 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
       if (mode === 'max') {
         return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
       }
-      // API 默认 reasoning_effort 就是 'max'，因此只需传强制开启标志。
-      return {thinking: {type: 'enabled'}};
+      // 官方接口沿用 max 默认值；自定义协议显式匹配选择器默认档位。
+      return {
+        thinking: {type: 'enabled'},
+        ...(protocol === 'chat-completions'
+          ? {}
+          : {reasoningEffort: PROTOCOL_CAPABILITIES[protocol].defaultEffort}),
+      };
     }
 
     if (options) {
@@ -379,6 +391,7 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
     const {thinking, reasoningEffort} = this.resolveThinking(
       model.id,
       modelConfig,
+      client.protocol,
     );
 
     let lastUsage:

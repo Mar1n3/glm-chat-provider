@@ -7,15 +7,23 @@
  * 两组选项）。
  */
 import type * as vscode from 'vscode';
+import type {ApiProtocol} from './region';
+import {PROTOCOL_CAPABILITIES, supportsEffort} from './protocol';
 
 /** 温度预设名：balanced=均衡、precise=精确、creative=创意、max=最高。 */
 export type TemperaturePreset = 'balanced' | 'precise' | 'creative' | 'max';
 /**
  * 模型选择器中 thinkingMode 选项的取值：
  * auto=由模型自行决定是否思考；enabled/disabled=强制开启/关闭思维链；
- * high/max=开启思维链并指定推理力度档位（仅支持力度档位的模型使用）。
+ * low/high/max=开启思维链并指定推理力度档位（仅支持力度档位的模型使用）。
  */
-export type ThinkingMode = 'auto' | 'enabled' | 'disabled' | 'high' | 'max';
+export type ThinkingMode =
+  | 'auto'
+  | 'enabled'
+  | 'disabled'
+  | 'low'
+  | 'high'
+  | 'max';
 
 /** 各温度预设对应的实际温度值（范围 0.0–1.0）。 */
 export const TEMPERATURE_PRESET_VALUES: Record<TemperaturePreset, number> = {
@@ -186,12 +194,41 @@ export const MODEL_CONFIGURATION_SCHEMA_EFFORT =
  * 获取指定思维支持类型对应的模型选择器配置 schema。
  * 参数 thinkingSupport：模型的思维支持类型；不传时按通用 'on-off' 处理。
  * 返回值：包含 thinkingMode 与 temperature 属性的配置 schema，
- * 返回类型与预生成的 MODEL_CONFIGURATION_SCHEMA_BASE 保持一致。
+ * 按当前协议过滤推理档位，展示与请求序列化共用能力定义。
  */
 export function getModelConfigurationSchema(
   thinkingSupport?: ThinkingSupport,
-): typeof MODEL_CONFIGURATION_SCHEMA_BASE {
-  return buildModelConfigurationSchema(thinkingSupport);
+  protocol: ApiProtocol = 'chat-completions',
+) {
+  const schema = buildModelConfigurationSchema(thinkingSupport);
+  const thinking = schema.properties.thinkingMode;
+  const entries = thinking.enum
+    .map((value, index) => ({
+      value,
+      label: thinking.enumItemLabels[index],
+      description: thinking.enumDescriptions[index],
+    }))
+    .filter(
+      entry =>
+        !['low', 'high', 'max'].includes(entry.value) ||
+        supportsEffort(protocol, entry.value),
+    );
+  return {
+    ...schema,
+    properties: {
+      ...schema.properties,
+      thinkingMode: {
+        ...thinking,
+        enum: entries.map(entry => entry.value),
+        enumItemLabels: entries.map(entry => entry.label),
+        enumDescriptions: entries.map(entry => entry.description),
+        default:
+          thinking.default === 'max'
+            ? PROTOCOL_CAPABILITIES[protocol].defaultEffort
+            : thinking.default,
+      },
+    },
+  };
 }
 
 /**

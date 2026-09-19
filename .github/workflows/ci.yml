@@ -1,0 +1,29 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run package
+      - name: Ensure packaging preserves release metadata
+        run: git diff --exit-code -- package.json package-lock.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.os }}
+          path: '*.vsix'
+          if-no-files-found: error
