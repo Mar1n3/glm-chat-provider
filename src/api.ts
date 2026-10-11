@@ -139,51 +139,54 @@ export interface NormalizedStreamChunk {
 }
 
 /**
- * 极简 SSE 解析：把 fetch 返回的响应体按行读取，
- * 处理 "event: xxx" / "data: {...}" 帧，产出事件对象数组。
- * 只解析 data 行的 JSON（两种协议的事件类型都在 data.type 里）。
+ * 极简 SSE 解析：把 fetch 返回的响应体按行读取，按空行切分事件帧，
+ * 产出每帧 data 行拼接后的 JSON。按 SSE 规范同时兼容 LF / CRLF / CR
+ * 三种换行（部分网关用 CRLF）；流结束时没有以空行收尾的最后一帧也会
+ * 分发。event: / id: / retry: 行与 ':' 开头的注释行忽略——两种协议的
+ * 事件类型都在 data JSON 的 type 字段里。
  */
 /* eslint-disable @typescript-eslint/no-explicit-any -- SSE 事件负载是动态 JSON，字段随事件类型变化，强类型化收益低 */
 async function* parseSse(
   response: Response,
   signal: AbortSignal,
-): AsyncGenerator<{event?: string; data: any}> {
+): AsyncGenerator<{data: any}> {
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let dataLines: string[] = [];
   try {
-    while (true) {
-      if (signal.aborted) {
-        return;
-      }
+    while (!signal.aborted) {
       const {done, value} = await reader.read();
+      buffer += decoder.decode(value, {stream: !done});
+      // 流结束时补一个空行，让最后一帧也能分发出去。
       if (done) {
-        break;
+        buffer += '\n\n';
       }
-      buffer += decoder.decode(value, {stream: true});
-      // SSE 帧之间用空行分隔；逐帧解析。
-      let boundary = buffer.indexOf('\n\n');
-      while (boundary !== -1) {
-        const frame = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        let data = '';
-        for (const line of frame.split('\n')) {
-          if (line.startsWith('data:')) {
-            data += line.slice(5).trim();
-          }
-          // event: 行可忽略——两种协议的事件名都在 data JSON 的 type 字段里。
+      // 末尾单独的 \r 可能是被拆到两个数据块的 \r\n，留到下一块再切。
+      const lines = buffer.split(/\r\n|\n|\r(?!$)/);
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (line.startsWith('data:')) {
+          dataLines.push(line.slice(line.startsWith('data: ') ? 6 : 5));
+          continue;
         }
+        if (line !== '' || dataLines.length === 0) {
+          continue;
+        }
+        // 空行：一帧结束，分发累积的 data。
+        const data = dataLines.join('\n').trim();
+        dataLines = [];
         if (data === '[DONE]') {
           return;
         }
-        if (data) {
-          try {
-            yield {data: JSON.parse(data)};
-          } catch {
-            // 跳过无法解析的数据帧（如心跳注释）。
-          }
+        try {
+          yield {data: JSON.parse(data)};
+        } catch {
+          // 跳过无法解析的数据帧。
         }
-        boundary = buffer.indexOf('\n\n');
+      }
+      if (done) {
+        return;
       }
     }
   } finally {
@@ -194,23 +197,22 @@ async function* parseSse(
 /* ==================== Anthropic Messages 协议适配 ==================== */
 
 /**
- * 把 Messages API 的流式事件归一化。有状态的转换：需要跨事件维护
- * 正在生成的块类型（text/thinking/tool_use）。
+ * 把 Messages API 的流式事件归一化。工具调用按块 index 聚合；输入
+ * token 数要从 message_start 记到 message_delta 才能汇总用量。
  */
 /* eslint-disable @typescript-eslint/no-explicit-any -- 事件负载同上 */
 class AnthropicStreamNormalizer {
-  /** index -> 当前块的类型。 */
-  private blockTypes = new Map<number, string>();
-  /** index -> tool_use 的 id 和名称（在 content_block_start 里给出）。 */
-  private toolMeta = new Map<number, {id: string; name: string}>();
+  /** message_start 里给出的输入 token 数，用于在 message_delta 里汇总用量。 */
+  private inputTokens = 0;
 
   next(event: any): NormalizedStreamChunk | undefined {
     switch (event?.type) {
+      case 'message_start':
+        this.inputTokens = event.message?.usage?.input_tokens ?? 0;
+        return undefined;
       case 'content_block_start': {
         const block = event.content_block;
-        this.blockTypes.set(event.index, block?.type);
         if (block?.type === 'tool_use') {
-          this.toolMeta.set(event.index, {id: block.id, name: block.name});
           return {
             toolCall: {index: event.index, id: block.id, name: block.name},
           };
@@ -219,7 +221,6 @@ class AnthropicStreamNormalizer {
       }
       case 'content_block_delta': {
         const delta = event.delta;
-        const kind = this.blockTypes.get(event.index);
         if (delta?.type === 'text_delta') {
           return {text: delta.text};
         }
@@ -234,42 +235,33 @@ class AnthropicStreamNormalizer {
             },
           };
         }
-        void kind;
-        return undefined;
-      }
-      case 'content_block_stop': {
-        const kind = this.blockTypes.get(event.index);
-        this.blockTypes.delete(event.index);
-        if (kind === 'tool_use') {
-          // 标记该工具调用结束：finishReason 统一在 message_delta 里给出。
-          return undefined;
-        }
         return undefined;
       }
       case 'message_delta': {
         const reason = event.delta?.stop_reason;
+        const outputTokens = event.usage?.output_tokens;
         return {
           finishReason: reason === 'tool_use' ? 'tool_calls' : 'stop',
-          usage: event.usage?.output_tokens
+          usage: outputTokens
             ? {
-                prompt_tokens: this.inputTokens ?? 0,
-                completion_tokens: event.usage.output_tokens,
-                total_tokens:
-                  (this.inputTokens ?? 0) + event.usage.output_tokens,
+                prompt_tokens: this.inputTokens,
+                completion_tokens: outputTokens,
+                total_tokens: this.inputTokens + outputTokens,
               }
             : undefined,
         };
       }
-      case 'message_start': {
-        this.inputTokens = event.message?.usage?.input_tokens ?? 0;
-        return undefined;
-      }
+      // 流中途的错误事件（如 overloaded_error）：抛出而不是静默结束，
+      // 否则用户只会看到一个被截断的空回复。
+      case 'error':
+        throw new GlmApiError(
+          `Custom provider error: ${event.error?.message ?? 'unknown'}`,
+          0,
+        );
       default:
         return undefined;
     }
   }
-
-  private inputTokens = 0;
 }
 
 /* ==================== OpenAI Responses 协议适配 ==================== */

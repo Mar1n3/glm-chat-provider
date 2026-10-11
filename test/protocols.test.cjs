@@ -303,3 +303,69 @@ for (const protocol of ['messages', 'responses']) {
     );
   });
 }
+
+/** Streams the given string chunks as a response body, split exactly as given. */
+function chunkedResponse(chunks) {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    }),
+    {status: 200},
+  );
+}
+
+async function collectStream(t, chunks) {
+  t.mock.method(globalThis, 'fetch', async () => chunkedResponse(chunks));
+  const client = new GlmApiClient('test-key', 'global', {
+    baseUrl: 'https://gateway.invalid',
+    protocol: 'messages',
+  });
+  const out = [];
+  for await (const chunk of client.streamChat(id, messages)) out.push(chunk);
+  return out;
+}
+
+const textDelta = text =>
+  `data: ${JSON.stringify({
+    type: 'content_block_delta',
+    index: 0,
+    delta: {type: 'text_delta', text},
+  })}`;
+
+test('SSE parser accepts CRLF frames split across chunk boundaries', async t => {
+  const frames = `event: content_block_delta\r\n${textDelta('Hel')}\r\n\r\n${textDelta('lo')}\r\n\r\n`;
+  // Split inside the "\r\n" pair and inside the JSON payload.
+  const cut = frames.indexOf('\r\n\r\n') + 1;
+  const out = await collectStream(t, [
+    frames.slice(0, cut),
+    frames.slice(cut, cut + 7),
+    frames.slice(cut + 7),
+  ]);
+  assert.deepEqual(
+    out.map(chunk => chunk.text),
+    ['Hel', 'lo'],
+  );
+});
+
+test('SSE parser delivers a final frame without a trailing blank line', async t => {
+  const out = await collectStream(t, [`${textDelta('a')}\n\n`, textDelta('b')]);
+  assert.deepEqual(
+    out.map(chunk => chunk.text),
+    ['a', 'b'],
+  );
+});
+
+test('Messages mid-stream error events surface as errors', async t => {
+  const error = `data: ${JSON.stringify({
+    type: 'error',
+    error: {type: 'overloaded_error', message: 'Overloaded'},
+  })}\n\n`;
+  await assert.rejects(
+    collectStream(t, [`${textDelta('partial')}\n\n`, error]),
+    /Overloaded/,
+  );
+});
