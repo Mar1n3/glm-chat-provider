@@ -20,4 +20,5 @@ bundle.js
 bundle.mjs
 package-lock.json
 test/**
+scripts/**
 .github/**
