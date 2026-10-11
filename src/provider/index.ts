@@ -10,10 +10,13 @@ import {
 } from '../region';
 import {
   GLM_MODEL_DEFINITIONS,
+  findModelDefinition,
   getModelConfigurationSchema,
+  resolveThinkingRequest,
   type GlmModelDefinition,
   type ModelConfigurationOptions,
   type ModelPickerChatInformation,
+  type ThinkingRequest,
 } from '../models';
 import {createThinkingPart} from './thinking';
 import {
@@ -23,7 +26,7 @@ import {
   type ToolCallBuilder,
 } from './convert';
 import {getConfiguredTemperature} from './temperature';
-import {parseApiProtocol, PROTOCOL_CAPABILITIES} from '../protocol';
+import {parseApiProtocol} from '../protocol';
 
 /**
  * 在 VS Code 模型信息上扩展的内部类型：额外挂一个 __glmApiKey 字段，
@@ -50,7 +53,7 @@ type PrepareLanguageModelChatInfoOptions =
 /**
  * 把一条 GLM 模型定义转换成 VS Code 模型选择器所需的
  * LanguageModelChatInformation（带类型字段的 ModelPickerChatInformation）。
- * 支持思维链的模型会附加 configurationSchema，供选择器展示 thinking 配置。
+ * configurationSchema 供选择器展示思考档位与温度配置。
  */
 function toChatInfo(
   m: GlmModelDefinition,
@@ -70,14 +73,10 @@ function toChatInfo(
       toolCalling: m.capabilities.toolCalling,
       imageInput: m.capabilities.imageInput,
     },
-    ...(m.capabilities.thinking
-      ? {
-          configurationSchema: getModelConfigurationSchema(
-            m.thinkingSupport,
-            protocol,
-          ),
-        }
-      : {}),
+    configurationSchema: getModelConfigurationSchema(
+      m.thinkingSupport,
+      protocol,
+    ),
   };
 }
 
@@ -289,83 +288,20 @@ export class GlmChatProvider implements vscode.LanguageModelChatProvider {
   }
 
   /**
-   * 根据模型的 thinkingSupport 类型与用户配置，解析出请求体需要的
-   * thinking 开关和 reasoning_effort 参数。
-   * @param modelId 模型 id，用于查找模型定义、判断其思维支持类型
-   * @param options 聊天选择器传入的配置，取值优先级高于全局设置
-   * 支持类型含义：on-off 可开关；on-off-effort 可开关且可选推理力度；
-   * always-on-effort 强制开启、只能调力度；其余视为不支持思维链。
-   * 返回空对象表示本次请求不带任何 thinking 相关字段。
+   * 解析请求体需要的 thinking 开关和 reasoning_effort 参数：
+   * 由模型的思考档位表（见 models.ts 的 THINKING_PROFILES）与用户在
+   * 选择器上的选择共同决定。返回空对象表示本次请求不带思考相关字段。
    */
   private resolveThinking(
     modelId: string,
     options?: ModelConfigurationOptions,
     protocol: ApiProtocol = 'chat-completions',
-  ): {thinking?: Record<string, unknown>; reasoningEffort?: string} {
-    const def = GLM_MODEL_DEFINITIONS.find(m => m.id === modelId);
-    const canDisable =
-      def?.thinkingSupport === 'on-off' ||
-      def?.thinkingSupport === 'on-off-effort';
-    const hasEffort = def?.thinkingSupport === 'on-off-effort';
-    const alwaysOnWithEffort = def?.thinkingSupport === 'always-on-effort';
-
-    if (alwaysOnWithEffort) {
-      // GLM-5.3 系列：思维链强制开启且不可关闭，只能控制
-      // reasoning_effort（low/high/max）。档位只来自输入框旁的
-      // 模型配置（configurationSchema），未选择时沿用 API 默认 max。
-      const mode =
-        options?.modelConfiguration?.thinkingMode ??
-        options?.configuration?.thinkingMode;
-
-      if (mode === 'low') {
-        return {thinking: {type: 'enabled'}, reasoningEffort: 'low'};
-      }
-      if (mode === 'high') {
-        return {thinking: {type: 'enabled'}, reasoningEffort: 'high'};
-      }
-      if (mode === 'max') {
-        return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
-      }
-      // 官方接口沿用 max 默认值；自定义协议显式匹配选择器默认档位。
-      return {
-        thinking: {type: 'enabled'},
-        ...(protocol === 'chat-completions'
-          ? {}
-          : {reasoningEffort: PROTOCOL_CAPABILITIES[protocol].defaultEffort}),
-      };
-    }
-
-    if (options) {
-      const configuredMode =
-        options.modelConfiguration?.thinkingMode ??
-        options.configuration?.thinkingMode;
-
-      if (hasEffort) {
-        if (configuredMode === 'high') {
-          return {thinking: {type: 'enabled'}, reasoningEffort: 'high'};
-        }
-        if (configuredMode === 'max') {
-          return {thinking: {type: 'enabled'}, reasoningEffort: 'max'};
-        }
-        if (configuredMode === 'disabled') {
-          return {thinking: {type: 'disabled'}};
-        }
-      } else {
-        if (configuredMode === 'enabled') {
-          // GLM 5.1+/5/4.7 系列默认已开启思维链；若在 type: 'enabled' 之外
-          // 附带 clear_thinking 等额外字段，新模型会校验报错，因此只传
-          // {type: 'enabled'}，不带任何额外字段。
-          return {thinking: {type: 'enabled'}};
-        }
-        if (configuredMode === 'disabled' && canDisable) {
-          return {thinking: {type: 'disabled'}};
-        }
-      }
-    }
-
-    // 全局 defaultThinkingMode 设置已移除；未在模型配置中选择时
-    // 不发送 thinking 字段，沿用服务端默认行为。
-    return {};
+  ): ThinkingRequest {
+    return resolveThinkingRequest(
+      findModelDefinition(modelId),
+      options,
+      protocol,
+    );
   }
 
   /**

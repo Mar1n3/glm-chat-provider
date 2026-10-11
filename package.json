@@ -144,6 +144,7 @@
     "lint": "gts lint",
     "clean": "gts clean",
     "fix": "gts fix",
+    "models:readme": "tsc && node scripts/models-readme.cjs",
     "prepare": "npm run compile",
     "pretest": "npm run compile",
     "test": "node --test test/*.test.cjs",
